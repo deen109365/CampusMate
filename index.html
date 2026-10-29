@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#3366CC">
+  <title>CampusMate</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>CampusMate</h1>
+  </header>
+
+  <main>
+    <!-- Shown when the user is logged out -->
+    <section id="auth-section" aria-label="Login and sign up">
+      <form id="login-form">
+        <h2>Log in</h2>
+        <label for="login-email">University email</label>
+        <input type="email" id="login-email" autocomplete="email" required>
+
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" autocomplete="current-password" required>
+
+        <button type="submit">Log in</button>
+        <p>New here? <button type="button" class="link" id="show-signup">Create an account</button></p>
+      </form>
+
+      <form id="signup-form" hidden>
+        <h2>Create an account</h2>
+        <label for="signup-name">Name</label>
+        <input type="text" id="signup-name" autocomplete="name" required>
+
+        <label for="signup-email">University email</label>
+        <input type="email" id="signup-email" autocomplete="email" required>
+
+        <label for="signup-password">Password (at least 6 characters)</label>
+        <input type="password" id="signup-password" autocomplete="new-password" minlength="6" required>
+
+        <button type="submit">Sign up</button>
+        <p>Already have an account? <button type="button" class="link" id="show-login">Log in</button></p>
+      </form>
+
+      <p id="message" role="alert" aria-live="polite"></p>
+    </section>
+
+    <!-- Shown when the user is logged in -->
+    <section id="app-section" aria-label="CampusMate home" hidden>
+      <h2 id="welcome">Welcome</h2>
+      <p>You are logged in. The match screen will go here.</p>
+      <button type="button" id="logout-btn">Log out</button>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
