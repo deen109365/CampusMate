@@ -49,7 +49,49 @@
     <!-- Shown when the user is logged in -->
     <section id="app-section" aria-label="CampusMate home" hidden>
       <h2 id="welcome">Welcome</h2>
-      <p>You are logged in. The match screen will go here.</p>
+
+      <form id="profile-form">
+        <h3>Your study profile</h3>
+
+        <label for="profile-module">Module code (for example CS32005)</label>
+        <input type="text" id="profile-module" maxlength="12" required>
+
+        <fieldset>
+          <legend>Days you are free</legend>
+          <label><input type="checkbox" name="days" value="Mon"> Mon</label>
+          <label><input type="checkbox" name="days" value="Tue"> Tue</label>
+          <label><input type="checkbox" name="days" value="Wed"> Wed</label>
+          <label><input type="checkbox" name="days" value="Thu"> Thu</label>
+          <label><input type="checkbox" name="days" value="Fri"> Fri</label>
+          <label><input type="checkbox" name="days" value="Sat"> Sat</label>
+          <label><input type="checkbox" name="days" value="Sun"> Sun</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Times you are free</legend>
+          <label><input type="checkbox" name="times" value="Morning"> Morning</label>
+          <label><input type="checkbox" name="times" value="Afternoon"> Afternoon</label>
+          <label><input type="checkbox" name="times" value="Evening"> Evening</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>How do you like to study?</legend>
+          <label><input type="radio" name="format" value="In person" required> In person</label>
+          <label><input type="radio" name="format" value="Online"> Online</label>
+          <label><input type="radio" name="format" value="Either"> Either</label>
+        </fieldset>
+
+        <button type="submit">Save profile</button>
+        <p id="profile-message" role="status" aria-live="polite"></p>
+      </form>
+
+      <section id="matches" aria-label="Suggested study partners">
+        <h3>Suggested study partners</h3>
+        <button type="button" id="find-matches">Find matches</button>
+        <p id="match-message" role="status" aria-live="polite"></p>
+        <ul id="match-list"></ul>
+      </section>
+
       <button type="button" id="logout-btn">Log out</button>
     </section>
   </main>
