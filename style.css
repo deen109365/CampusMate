@@ -1,30 +1,25 @@
-* {
-  box-sizing: border-box;
-}
+/* CampusMate styles: mobile-first, high contrast, accessible */
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
-  font-size: 16px;
-  color: #1a1a1a;
-  background: #f4f6fb;
-}
-
-[hidden] {
-  display: none !important;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: #111;
+  background: #f5f7fc;
 }
 
 header {
   background: #3366cc;
-  color: #ffffff;
+  color: #fff;
   padding: 16px;
   text-align: center;
 }
 
-header h1 {
-  margin: 0;
-  font-size: 1.5rem;
-}
+header h1 { margin: 0; font-size: 1.6rem; }
 
 main {
   max-width: 480px;
@@ -32,18 +27,16 @@ main {
   padding: 16px;
 }
 
-form,
+#auth-section,
 #app-section {
-  background: #ffffff;
-  border: 1px solid #d0d7e5;
+  background: #fff;
+  border: 1px solid #d5dcea;
   border-radius: 12px;
-  padding: 20px;
+  padding: 16px;
 }
 
-h2 {
-  margin-top: 0;
-  font-size: 1.25rem;
-}
+h2 { margin-top: 0; font-size: 1.4rem; }
+h3 { font-size: 1.15rem; margin: 16px 0 8px; }
 
 label {
   display: block;
@@ -51,53 +44,123 @@ label {
   font-weight: bold;
 }
 
-input {
+input[type="text"],
+input[type="email"],
+input[type="password"] {
   width: 100%;
   min-height: 44px;
-  padding: 10px;
+  padding: 8px 12px;
   font-size: 1rem;
-  border: 1px solid #7a859b;
+  border: 1px solid #5a6477;
   border-radius: 8px;
+  background: #fff;
+  color: #111;
 }
 
 button {
   min-height: 44px;
+  min-width: 44px;
   margin-top: 16px;
-  padding: 10px 20px;
+  padding: 10px 18px;
   font-size: 1rem;
-  color: #ffffff;
-  background: #3366cc;
+  color: #fff;
+  background: #2f5fc7;
   border: none;
   border-radius: 8px;
   cursor: pointer;
 }
 
-button:hover {
-  background: #264d99;
-}
+button:hover { background: #244ba0; }
 
 button.link {
-  min-height: auto;
   margin: 0;
-  padding: 0;
-  color: #1f4fa8;
+  padding: 0 4px;
+  min-height: 44px;
+  color: #1a3d99;
   background: none;
   text-decoration: underline;
 }
 
-button.link:hover {
-  background: none;
-}
+button.link:hover { background: none; color: #0f2a70; }
 
-input:focus-visible,
-button:focus-visible {
+:focus-visible {
   outline: 3px solid #ffb400;
   outline-offset: 2px;
 }
 
 #message {
-  min-height: 24px;
-  margin-top: 12px;
+  margin: 12px 0 0;
+  color: #b00020;
   font-weight: bold;
-  color: #a12020;
 }
+
+#profile-message {
+  margin: 12px 0 0;
+  font-weight: bold;
+  color: #1b5e20;
+}
+
+/* Profile form: checkboxes, radios and groups */
+fieldset {
+  border: 1px solid #c8d0e0;
+  border-radius: 8px;
+  margin: 16px 0;
+  padding: 8px 12px 12px;
+}
+
+legend {
+  font-weight: bold;
+  padding: 0 6px;
+}
+
+fieldset label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 14px 6px 0;
+  min-height: 44px;
+  font-weight: normal;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  margin: 0;
+  accent-color: #3366cc;
+}
+
+/* Matches */
+#matches {
+  margin-top: 24px;
+  padding-top: 8px;
+  border-top: 1px solid #d5dcea;
+}
+
+#match-message {
+  margin: 12px 0 0;
+  font-weight: bold;
+}
+
+#match-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.match-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  background: #f5f7fc;
+  border: 1px solid #c8d0e0;
+  border-radius: 10px;
+}
+
+.match-card strong { font-size: 1.1rem; }
+.match-card span { color: #333; }
+
+#logout-btn { margin-top: 24px; }
