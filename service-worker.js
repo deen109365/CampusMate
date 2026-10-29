@@ -1,10 +1,12 @@
-const CACHE_NAME = "campusmate-v1";
+const CACHE_NAME = "campusmate-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
-  "./manifest.json"
+  "./manifest.json",
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
@@ -23,11 +25,19 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Network first: always get the newest files, fall back to the saved copy offline.
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   // Only handle our own files. Firebase calls always go to the network.
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
+
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    fetch(event.request)
+      .then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
