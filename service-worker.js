@@ -1,43 +1,58 @@
-const CACHE_NAME = "campusmate-v2";
-const APP_SHELL = [
-  "./",
-  "./index.html",
-  "./style.css",
-  "./app.js",
-  "./manifest.json",
-  "./icon-192.png",
-  "./icon-512.png"
+// Network-first service worker: always tries the network, falls back to cache offline.
+const CACHE = "campusmate-v6";
+const FIREBASE_CDN = "https://www.gstatic.com/firebasejs/";
+const SHELL = [
+  "./", "./index.html", "./style.css", "./app.js", "./ui.js", "./matching.js", "./sessions.js",
+  "./manifest.json", "./icon-192.png", "./icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
+    caches.open(CACHE).then((c) => Promise.all(SHELL.map((u) => c.add(u).catch(() => {}))))
   );
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Network first: always get the newest files, fall back to the saved copy offline.
 self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
-  // Only handle our own files. Firebase calls always go to the network.
-  if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
-
+  const req = event.request;
+  if (req.method !== "GET") return;
+  // Firebase SDK files are versioned and never change, so serve them cache-first (works offline)
+  if (req.url.startsWith(FIREBASE_CDN)) {
+    event.respondWith(
+      caches.match(req).then((hit) => hit || fetch(req).then((res) => {
+        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {}); }
+        return res;
+      }))
+    );
+    return;
+  }
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return; // never touch Firebase data / Open-Meteo
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        return response;
+    fetch(req)
+      .then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        return res;
       })
-      .catch(() => caches.match(event.request))
+      .catch(() => caches.match(req).then((hit) => hit || (req.mode === "navigate" ? caches.match("./index.html") : Response.error())))
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const c of list) { if ("focus" in c) return c.focus(); }
+      return self.clients.openWindow("./index.html");
+    })
   );
 });
