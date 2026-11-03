@@ -1,14 +1,17 @@
 {
+  "id": "./index.html",
   "name": "CampusMate",
   "short_name": "CampusMate",
-  "description": "Find study partners by module, availability and format.",
+  "description": "Find a study partner on campus who shares your module and your free time.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#F5F7FC",
+  "orientation": "portrait-primary",
+  "lang": "en-GB",
+  "background_color": "#F4F6FC",
   "theme_color": "#3366CC",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }
