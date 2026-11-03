@@ -1,100 +1,309 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-GB">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>CampusMate - find your study partner</title>
+  <meta name="description" content="CampusMate matches university students with study partners who share their module, free days and study style.">
   <meta name="theme-color" content="#3366CC">
-  <title>CampusMate</title>
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+  <link rel="modulepreload" href="app.js">
   <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem("campusmate-theme");
+        if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) { document.documentElement.setAttribute("data-theme", "light"); }
+    })();
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <h1>CampusMate</h1>
-  </header>
+  <noscript><p class="noscript">CampusMate needs JavaScript to run. Please turn it on in your browser settings.</p></noscript>
+  <a class="skip-link" href="#main">Skip to main content</a>
+  <div id="offline-banner" class="offline-banner" role="status" hidden>You are offline. Showing saved data; messages will send when you reconnect.</div>
+  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
 
-  <main>
-    <!-- Shown when the user is logged out -->
-    <section id="auth-section" aria-label="Login and sign up">
-      <form id="login-form">
-        <h2>Log in</h2>
-        <label for="login-email">University email</label>
-        <input type="email" id="login-email" autocomplete="email" required>
+  <!-- === AUTH === -->
+  <section id="auth-section" aria-labelledby="auth-title">
+    <div class="hero">
+      <button type="button" class="icon-btn theme-toggle" aria-label="Switch between light and dark mode">
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="hero-logo" aria-hidden="true">CM</div>
+      <h1 id="auth-title">CampusMate</h1>
+      <p class="hero-sub">Find a study partner who shares your module and your free time.</p>
+      <ul class="hero-points" aria-label="Highlights">
+        <li>Matched by module, days and times</li>
+        <li>Private chat once you both agree</li>
+        <li>Weather-aware meeting spots</li>
+      </ul>
+    </div>
 
-        <label for="login-password">Password</label>
-        <input type="password" id="login-password" autocomplete="current-password" required>
+    <div class="auth-card card">
+      <div class="segmented" role="group" aria-label="Choose login or sign up">
+        <button type="button" id="mode-login" aria-pressed="true">Log in</button>
+        <button type="button" id="mode-signup" aria-pressed="false">Sign up</button>
+      </div>
 
-        <button type="submit">Log in</button>
-        <p>New here? <button type="button" class="link" id="show-signup">Create an account</button></p>
+      <form id="auth-form" novalidate>
+        <div class="field" id="name-field" hidden>
+          <label for="auth-name">Your name</label>
+          <input id="auth-name" type="text" autocomplete="name" maxlength="40" placeholder="e.g. Alex Morgan">
+        </div>
+        <div class="field">
+          <label for="auth-email">University email</label>
+          <input id="auth-email" type="email" autocomplete="email" inputmode="email" placeholder="you@dundee.ac.uk" required>
+        </div>
+        <div class="field">
+          <label for="auth-password">Password</label>
+          <input id="auth-password" type="password" autocomplete="current-password" minlength="6" placeholder="At least 6 characters" required>
+        </div>
+        <button id="forgot-btn" class="link-btn" type="button">Forgot password?</button>
+        <p id="auth-message" class="form-message" role="alert"></p>
+        <button id="auth-submit" class="btn btn-primary btn-block" type="submit">Log in</button>
       </form>
+    </div>
+    <p class="fineprint">Your location is never stored. Only your name, module and availability are shared with other students.</p>
+  </section>
 
-      <form id="signup-form" hidden>
-        <h2>Create an account</h2>
-        <label for="signup-name">Name</label>
-        <input type="text" id="signup-name" autocomplete="name" required>
+  <!-- === APP === -->
+  <div id="app-section" hidden>
+    <header class="appbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">CM</span><span class="brand-name">CampusMate</span></div>
+      <div class="appbar-right">
+      <button type="button" class="icon-btn theme-toggle" aria-label="Switch between light and dark mode">
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <div id="appbar-avatar" class="appbar-avatar"></div>
+      </div>
+    </header>
 
-        <label for="signup-email">University email</label>
-        <input type="email" id="signup-email" autocomplete="email" required>
+    <main id="main" tabindex="-1">
+      <!-- HOME -->
+      <section id="view-home" class="view" aria-labelledby="home-title">
+        <div class="greeting">
+          <p class="eyebrow">Welcome back</p>
+          <h2 id="home-title">Hello</h2>
+        </div>
 
-        <label for="signup-password">Password (at least 6 characters)</label>
-        <input type="password" id="signup-password" autocomplete="new-password" minlength="6" required>
+        <div id="verify-banner" class="card verify" role="status" hidden>
+          <strong>Verify your email</strong>
+          <p id="verify-text" class="muted">We sent you a link. Check your spam folder too.</p>
+          <div class="person-actions">
+            <button id="verify-resend" class="btn btn-ghost btn-small" type="button">Resend email</button>
+            <button id="verify-check" class="btn btn-primary btn-small" type="button">I have verified</button>
+          </div>
+        </div>
 
-        <button type="submit">Sign up</button>
-        <p>Already have an account? <button type="button" class="link" id="show-login">Log in</button></p>
-      </form>
+        <div id="reminder" class="reminder" role="status" hidden></div>
 
-      <p id="message" role="alert" aria-live="polite"></p>
-    </section>
+        <div id="profile-summary" class="card summary"></div>
 
-    <!-- Shown when the user is logged in -->
-    <section id="app-section" aria-label="CampusMate home" hidden>
-      <h2 id="welcome">Welcome</h2>
+        <div class="section-head"><h3>Study sessions</h3></div>
+        <div id="home-sessions" class="stack" aria-live="polite"></div>
 
-      <form id="profile-form">
-        <h3>Your study profile</h3>
+        <div class="section-head">
+          <h3>Study partners for you</h3>
+          <button id="find-btn" class="btn btn-primary btn-small" type="button">Find matches</button>
+        </div>
+        <div id="matches" class="stack" aria-live="polite"></div>
 
-        <label for="profile-module">Module code (for example CS32005)</label>
-        <input type="text" id="profile-module" maxlength="12" required>
-
-        <fieldset>
-          <legend>Days you are free</legend>
-          <label><input type="checkbox" name="days" value="Mon"> Mon</label>
-          <label><input type="checkbox" name="days" value="Tue"> Tue</label>
-          <label><input type="checkbox" name="days" value="Wed"> Wed</label>
-          <label><input type="checkbox" name="days" value="Thu"> Thu</label>
-          <label><input type="checkbox" name="days" value="Fri"> Fri</label>
-          <label><input type="checkbox" name="days" value="Sat"> Sat</label>
-          <label><input type="checkbox" name="days" value="Sun"> Sun</label>
-        </fieldset>
-
-        <fieldset>
-          <legend>Times you are free</legend>
-          <label><input type="checkbox" name="times" value="Morning"> Morning</label>
-          <label><input type="checkbox" name="times" value="Afternoon"> Afternoon</label>
-          <label><input type="checkbox" name="times" value="Evening"> Evening</label>
-        </fieldset>
-
-        <fieldset>
-          <legend>How do you like to study?</legend>
-          <label><input type="radio" name="format" value="In person" required> In person</label>
-          <label><input type="radio" name="format" value="Online"> Online</label>
-          <label><input type="radio" name="format" value="Either"> Either</label>
-        </fieldset>
-
-        <button type="submit">Save profile</button>
-        <p id="profile-message" role="status" aria-live="polite"></p>
-      </form>
-
-      <section id="matches" aria-label="Suggested study partners">
-        <h3>Suggested study partners</h3>
-        <button type="button" id="find-matches">Find matches</button>
-        <p id="match-message" role="status" aria-live="polite"></p>
-        <ul id="match-list"></ul>
+        <div class="section-head"><h3>Requests</h3></div>
+        <div id="requests" class="stack" aria-live="polite"></div>
       </section>
 
-      <button type="button" id="logout-btn">Log out</button>
-    </section>
-  </main>
+      <!-- MESSAGES -->
+      <section id="view-messages" class="view" aria-labelledby="messages-title" hidden>
+        <div id="partners-panel">
+          <div class="greeting"><h2 id="messages-title">Messages</h2></div>
+          <div id="partners" class="stack"></div>
+        </div>
+
+        <div id="chat-panel" class="chat" hidden>
+          <div class="chat-head">
+            <button id="chat-back" class="icon-btn" type="button" aria-label="Back to partners">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div id="chat-avatar"></div>
+            <div class="chat-title">
+              <strong id="chat-name">Partner</strong>
+              <span id="chat-sub" class="muted">Study partner</span>
+            </div>
+            <div class="chat-menu-wrap">
+              <button id="chat-menu-btn" class="icon-btn" type="button" aria-label="More options" aria-haspopup="true" aria-expanded="false">
+                <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="5" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/></svg>
+              </button>
+              <div id="chat-menu" class="menu" role="menu" hidden>
+                <button type="button" role="menuitem" id="m-report">Report</button>
+                <button type="button" role="menuitem" id="m-block">Block</button>
+                <button type="button" role="menuitem" id="m-remove">Remove partner</button>
+              </div>
+            </div>
+          </div>
+          <div id="chat-session-strip" class="session-strip" hidden></div>
+          <div id="chat-log" class="chat-log" role="log" aria-live="polite" aria-label="Conversation"></div>
+          <div id="spot-card" class="spot" hidden></div>
+          <div class="chat-tools">
+            <button id="session-btn" class="btn btn-ghost btn-small" type="button">Plan a session</button>
+            <button id="spot-btn" class="btn btn-ghost btn-small" type="button">Suggest a spot</button>
+          </div>
+          <form id="chat-form" class="chat-form" autocomplete="off">
+            <label for="chat-input" class="sr-only">Message</label>
+            <input id="chat-input" type="text" maxlength="500" placeholder="Write a message" required>
+            <button class="btn btn-primary send-btn" type="submit" aria-label="Send message">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 11.5L21 3l-8.5 18-2-7.5z" fill="currentColor"/></svg>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- PROFILE -->
+      <section id="view-profile" class="view" aria-labelledby="profile-title" hidden>
+        <div class="greeting">
+          <h2 id="profile-title">Your profile</h2>
+          <p class="muted">Tell us when and how you like to study.</p>
+        </div>
+        <form id="profile-form" class="card" novalidate>
+          <div class="field">
+            <label for="p-name">Display name</label>
+            <input id="p-name" type="text" maxlength="40" required>
+          </div>
+          <div class="field">
+            <label for="p-module">Module code</label>
+            <input id="p-module" type="text" maxlength="9" placeholder="e.g. CS32005" autocapitalize="characters" required>
+            <small class="hint">Letters then numbers, for example MAB001.</small>
+          </div>
+
+          <fieldset class="field">
+            <legend>Days you can study</legend>
+            <div class="chip-group" id="p-days"></div>
+          </fieldset>
+
+          <fieldset class="field">
+            <legend>Times that suit you</legend>
+            <div class="chip-group" id="p-times"></div>
+          </fieldset>
+
+          <fieldset class="field">
+            <legend>Study format</legend>
+            <div class="chip-group" id="p-format"></div>
+          </fieldset>
+
+          <fieldset class="field">
+            <legend>Study goal</legend>
+            <div class="chip-group" id="p-goal"></div>
+            <small class="hint">People with the same goal are ranked higher in your matches.</small>
+          </fieldset>
+
+          <label class="switch-row" for="p-visible">
+            <span><strong>Show me in suggestions</strong><small class="hint">Turn off to hide your profile from other students.</small></span>
+            <input id="p-visible" type="checkbox" role="switch" checked>
+          </label>
+
+          <p id="profile-message" class="form-message" role="alert"></p>
+          <button id="profile-save" class="btn btn-primary btn-block" type="submit">Save profile</button>
+        </form>
+
+        <div class="card notif">
+          <label class="switch-row" for="notif-toggle">
+            <span><strong>Notifications</strong><small class="hint" id="notif-text">Get alerts for new messages, requests and sessions.</small></span>
+            <input id="notif-toggle" type="checkbox" role="switch">
+          </label>
+        </div>
+
+        <div class="card notif">
+          <label class="switch-row" for="bio-toggle">
+            <span><strong>Biometric lock</strong><small class="hint" id="bio-text">Unlock CampusMate with your fingerprint, face or device PIN.</small></span>
+            <input id="bio-toggle" type="checkbox" role="switch">
+          </label>
+        </div>
+
+        <div id="install-card" class="card install" hidden>
+          <strong>Install CampusMate</strong>
+          <p id="install-text" class="muted">Add it to your home screen for a full-screen app experience.</p>
+          <button id="install-btn" class="btn btn-primary btn-small" type="button" hidden>Install app</button>
+        </div>
+
+        <button id="logout-btn" class="btn btn-ghost btn-block" type="button">Log out</button>
+      </section>
+    </main>
+
+    <nav id="bottom-nav" class="bottom-nav" aria-label="Main">
+      <button type="button" data-view="home" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Home</span>
+        <b id="nav-badge" class="badge" hidden>0</b>
+      </button>
+      <button type="button" data-view="messages">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        <span>Messages</span>
+        <b id="msg-badge" class="badge" hidden>0</b>
+      </button>
+      <button type="button" data-view="profile">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21c1-4.5 4-6 8-6s7 1.5 8 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>Profile</span>
+      </button>
+    </nav>
+  </div>
+
+  <section id="lock-section" class="lock" aria-labelledby="lock-title" hidden>
+    <div class="lock-card">
+      <div class="hero-logo" aria-hidden="true">CM</div>
+      <h2 id="lock-title">CampusMate is locked</h2>
+      <p class="muted">Verify it is you to continue.</p>
+      <p id="lock-message" class="form-message" role="alert"></p>
+      <button id="unlock-btn" class="btn btn-primary btn-block" type="button">Unlock</button>
+      <button id="lock-signout" class="btn btn-ghost btn-block" type="button">Use password instead</button>
+    </div>
+  </section>
+
+  <dialog id="dlg" aria-labelledby="dlg-title">
+    <h2 id="dlg-title">Confirm</h2>
+    <p id="dlg-text" class="muted"></p>
+    <div id="dlg-textarea-wrap" class="field" hidden>
+      <label for="dlg-textarea" id="dlg-textarea-label">Details</label>
+      <textarea id="dlg-textarea" rows="3" maxlength="300"></textarea>
+    </div>
+    <label id="dlg-checkbox-wrap" class="check-row" hidden>
+      <input id="dlg-checkbox" type="checkbox">
+      <span id="dlg-checkbox-label"></span>
+    </label>
+    <p id="dlg-error" class="form-message" role="alert"></p>
+    <div class="dlg-actions">
+      <button id="dlg-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="dlg-ok" class="btn btn-primary" type="button">OK</button>
+    </div>
+  </dialog>
+
+  <dialog id="session-dlg" aria-labelledby="session-title">
+    <h2 id="session-title">Plan a study session</h2>
+    <p id="session-with" class="muted"></p>
+    <div class="field">
+      <label for="s-date">Date</label>
+      <input id="s-date" type="date">
+    </div>
+    <div class="field">
+      <label for="s-time">Time</label>
+      <input id="s-time" type="time" step="900">
+    </div>
+    <div class="field">
+      <label for="s-place">Place</label>
+      <input id="s-place" type="text" maxlength="60" placeholder="e.g. Main Library, 2nd floor">
+      <div class="quick" id="s-quick" aria-label="Quick place suggestions"></div>
+    </div>
+    <p id="session-error" class="form-message" role="alert"></p>
+    <div class="dlg-actions">
+      <button id="session-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="session-ok" class="btn btn-primary" type="button">Send proposal</button>
+    </div>
+  </dialog>
 
   <script type="module" src="app.js"></script>
 </body>
