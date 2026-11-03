@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CampusMate unit tests</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-size: 22px; }
+    .summary { font-size: 20px; font-weight: 700; margin: 12px 0 18px; }
+    li { list-style: none; padding: 6px 10px; margin: 4px 0; border-radius: 8px; }
+    .pass { background: #E3F5E8; color: #14602B; }
+    .fail { background: #FCE4E2; color: #8C1D18; }
+    ul { padding: 0; }
+  </style>
+</head>
+<body>
+  <h1>CampusMate - unit tests</h1>
+  <p class="summary" id="summary">Running...</p>
+  <ul id="results"></ul>
+  <script type="module">
+    import { overlap, formatsCompatible, pairId, isValidModule, normaliseModule, matchLabel, findCompatible } from "./matching.js";
+    import { initials, colourFor, PALETTE, toB64Url, fromB64Url } from "./ui.js";
+    import {
+      tsMillis, todayString, sessionStart, validateSession, isActive, isUpcoming, needsRating,
+      pendingForMe, sortByStart, describeWhen, reminderFor, averageRating, isUnread, isSeen,
+      sessionTimes, buildIcs, googleCalendarUrl, minutesUntil
+    } from "./sessions.js";
+
+    const results = [];
+    function test(name, fn) {
+      try { fn(); results.push({ name, ok: true }); }
+      catch (e) { results.push({ name, ok: false, msg: e.message }); }
+    }
+    function eq(a, b) {
+      if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error("expected " + JSON.stringify(b) + " got " + JSON.stringify(a));
+    }
+
+    const me = { uid: "me", module: "CS32005", days: ["Mon", "Tue"], times: ["Morning", "Evening"], format: "In person" };
+    const mk = (o) => ({ uid: "x", name: "X", module: "CS32005", days: ["Mon"], times: ["Morning"], format: "In person", visible: true, ...o });
+
+    test("overlap finds shared items", () => eq(overlap(["Mon", "Tue"], ["Tue", "Wed"]), ["Tue"]));
+    test("overlap with no shared items is empty", () => eq(overlap(["Mon"], ["Fri"]), []));
+    test("overlap handles undefined", () => eq(overlap(undefined, ["Mon"]), []));
+    test("same format is compatible", () => eq(formatsCompatible("Online", "Online"), true));
+    test("different formats are not compatible", () => eq(formatsCompatible("Online", "In person"), false));
+    test("Either matches In person", () => eq(formatsCompatible("Either", "In person"), true));
+    test("Either matches Online (other side)", () => eq(formatsCompatible("Online", "Either"), true));
+    test("missing format is not compatible", () => eq(formatsCompatible("", "Online"), false));
+    test("pairId is order independent", () => eq(pairId("b", "a"), pairId("a", "b")));
+    test("pairId joins sorted ids", () => eq(pairId("b", "a"), "a_b"));
+    test("valid module CS32005", () => eq(isValidModule("CS32005"), true));
+    test("valid module lower case mab001", () => eq(isValidModule("mab001"), true));
+    test("invalid module 12345", () => eq(isValidModule("12345"), false));
+    test("invalid module empty", () => eq(isValidModule(""), false));
+    test("normaliseModule strips spaces and upper-cases", () => eq(normaliseModule(" cs 32005 "), "CS32005"));
+    test("matches same module with overlap", () => eq(findCompatible(me, [mk({ uid: "a" })]).length, 1));
+    test("excludes different module", () => eq(findCompatible(me, [mk({ module: "MA10001" })]).length, 0));
+    test("excludes no shared day", () => eq(findCompatible(me, [mk({ days: ["Fri"] })]).length, 0));
+    test("excludes no shared time", () => eq(findCompatible(me, [mk({ times: ["Afternoon"] })]).length, 0));
+    test("excludes incompatible format", () => eq(findCompatible(me, [mk({ format: "Online" })]).length, 0));
+    test("excludes hidden profiles", () => eq(findCompatible(me, [mk({ visible: false })]).length, 0));
+    test("excludes myself", () => eq(findCompatible(me, [mk({ uid: "me" })]).length, 0));
+    test("ranks bigger overlap first", () => {
+      const r = findCompatible(me, [
+        mk({ uid: "low" }),
+        mk({ uid: "high", days: ["Mon", "Tue"], times: ["Morning", "Evening"] })
+      ]);
+      eq(r.map((x) => x.user.uid), ["high", "low"]);
+    });
+    test("matchLabel thresholds", () => eq([matchLabel(1), matchLabel(3), matchLabel(6)], ["Good match", "Great match", "Excellent match"]));
+    test("initials of two words", () => eq(initials("Deen Sarker"), "DS"));
+    test("initials of one word", () => eq(initials("alex"), "A"));
+    test("colourFor is stable and in palette", () => {
+      eq(colourFor("abc"), colourFor("abc"));
+      eq(PALETTE.includes(colourFor("abc")), true);
+    });
+
+    // --- sessions ---
+    const NOW = new Date(2026, 10, 2, 12, 0, 0); // Mon 2 Nov 2026 12:00
+    const S = (o) => ({ id: "s1", date: "2026-11-03", time: "10:00", place: "Library", status: "accepted", proposedBy: "a", ...o });
+    test("validateSession accepts a valid future session", () => eq(validateSession({ date: "2026-11-03", time: "10:00", place: "Library" }, NOW), ""));
+    test("validateSession rejects missing date", () => eq(validateSession({ date: "", time: "10:00", place: "Library" }, NOW), "Choose a date."));
+    test("validateSession rejects missing time", () => eq(validateSession({ date: "2026-11-03", time: "", place: "Library" }, NOW), "Choose a time."));
+    test("validateSession rejects the past", () => eq(validateSession({ date: "2026-11-01", time: "10:00", place: "Library" }, NOW), "Pick a time in the future."));
+    test("validateSession rejects short place", () => eq(validateSession({ date: "2026-11-03", time: "10:00", place: "L" }, NOW) !== "", true));
+    test("validateSession rejects 61 character place", () => eq(validateSession({ date: "2026-11-03", time: "10:00", place: "x".repeat(61) }, NOW) !== "", true));
+    test("sessionStart builds a local Date", () => eq(sessionStart(S({})).getHours(), 10));
+    test("sessionStart handles missing data", () => eq(sessionStart({}), null));
+    test("todayString formats yyyy-mm-dd", () => eq(todayString(NOW), "2026-11-02"));
+    test("isActive for proposed and accepted only", () => eq([isActive(S({ status: "proposed" })), isActive(S({})), isActive(S({ status: "declined" })), isActive(S({ status: "cancelled" }))], [true, true, false, false]));
+    test("isUpcoming true for tomorrow", () => eq(isUpcoming(S({}), NOW), true));
+    test("isUpcoming false for yesterday", () => eq(isUpcoming(S({ date: "2026-11-01" }), NOW), false));
+    test("needsRating for past accepted session", () => eq(needsRating(S({ date: "2026-11-01" }), NOW, new Set()), true));
+    test("needsRating false when already rated", () => eq(needsRating(S({ date: "2026-11-01" }), NOW, new Set(["s1"])), false));
+    test("needsRating false for future session", () => eq(needsRating(S({}), NOW, new Set()), false));
+    test("needsRating false when not accepted", () => eq(needsRating(S({ date: "2026-11-01", status: "declined" }), NOW, new Set()), false));
+    test("pendingForMe finds proposals from the other person", () => eq(pendingForMe([S({ status: "proposed" })], "me", NOW).length, 1));
+    test("pendingForMe ignores my own proposals", () => eq(pendingForMe([S({ status: "proposed", proposedBy: "me" })], "me", NOW).length, 0));
+    test("sortByStart orders earliest first", () => eq(sortByStart([S({ id: "b", date: "2026-11-05" }), S({ id: "a", date: "2026-11-03" })]).map((x) => x.id), ["a", "b"]));
+    test("describeWhen says Today", () => eq(describeWhen(S({ date: "2026-11-02", time: "15:00" }), NOW), "Today at 15:00"));
+    test("describeWhen says Tomorrow", () => eq(describeWhen(S({}), NOW), "Tomorrow at 10:00"));
+    test("describeWhen says Yesterday", () => eq(describeWhen(S({ date: "2026-11-01" }), NOW), "Yesterday at 10:00"));
+    test("reminderFor finds session within 24 hours", () => eq(reminderFor([S({})], NOW, 24).id, "s1"));
+    test("reminderFor ignores sessions beyond 24 hours", () => eq(reminderFor([S({ date: "2026-11-05" })], NOW, 24), null));
+    test("reminderFor ignores unconfirmed sessions", () => eq(reminderFor([S({ status: "proposed" })], NOW, 24), null));
+    test("averageRating computes mean to 1 dp", () => eq(averageRating([{ stars: 5 }, { stars: 4 }, { stars: 4 }]), { avg: 4.3, count: 3 }));
+    test("averageRating empty list", () => eq(averageRating([]), { avg: 0, count: 0 }));
+    test("averageRating ignores invalid stars", () => eq(averageRating([{ stars: 9 }, { stars: 3 }]), { avg: 3, count: 1 }));
+    test("tsMillis reads Firestore-like timestamps", () => eq(tsMillis({ toDate: () => new Date(5000) }), 5000));
+    test("isUnread when partner message is newer than last read", () => eq(isUnread({ senderUid: "b", createdAt: { toDate: () => new Date(2000) } }, { at: { toDate: () => new Date(1000) } }, "me"), true));
+    test("isUnread false when already read", () => eq(isUnread({ senderUid: "b", createdAt: { toDate: () => new Date(1000) } }, { at: { toDate: () => new Date(2000) } }, "me"), false));
+    test("isUnread false for my own message", () => eq(isUnread({ senderUid: "me", createdAt: { toDate: () => new Date(2000) } }, null, "me"), false));
+    test("isUnread true when never read", () => eq(isUnread({ senderUid: "b", createdAt: { toDate: () => new Date(2000) } }, null, "me"), true));
+
+    // --- study goal + seen ---
+    const meG = { ...me, goal: "Coursework" };
+    test("same study goal ranks higher with equal overlap", () => {
+      const r = findCompatible(meG, [mk({ uid: "other", goal: "Exam revision" }), mk({ uid: "same", goal: "Coursework" })]);
+      eq(r.map((x) => x.user.uid), ["same", "other"]);
+    });
+    test("a different study goal does not exclude a match", () => eq(findCompatible(meG, [mk({ goal: "Catch-up" })]).length, 1));
+    test("sameGoal flag is true only when both goals match", () => {
+      const r = findCompatible(meG, [mk({ uid: "a", goal: "Coursework" }), mk({ uid: "b" })]);
+      eq(r.map((x) => x.sameGoal).sort(), [false, true]);
+    });
+    test("missing goal on my side gives no bonus", () => eq(findCompatible(me, [mk({ goal: "Coursework" })])[0].sameGoal, false));
+    const MSG = { senderUid: "me", createdAt: { toDate: () => new Date(1000) } };
+    test("isSeen true when partner read after the message", () => eq(isSeen(MSG, { at: { toDate: () => new Date(2000) } }), true));
+    test("isSeen false when partner read before the message", () => eq(isSeen(MSG, { at: { toDate: () => new Date(500) } }), false));
+    test("isSeen false when partner never read", () => eq(isSeen(MSG, null), false));
+    test("isSeen false for a message still being sent", () => eq(isSeen({ senderUid: "me", createdAt: null }, { at: { toDate: () => new Date(2000) } }), false));
+
+    // --- calendar ---
+    const CAL = { id: "s9", date: "2026-11-03", time: "14:00", place: "Main Library, 2nd floor", status: "accepted" };
+    test("sessionTimes gives start and a one hour end", () => eq(sessionTimes(CAL), { start: "20261103T140000", end: "20261103T150000" }));
+    test("sessionTimes rolls over midnight", () => eq(sessionTimes({ date: "2026-11-03", time: "23:30" }).end, "20261104T003000"));
+    test("buildIcs has calendar wrapper", () => { const t = buildIcs(CAL, "Tom", NOW); eq(t.startsWith("BEGIN:VCALENDAR") && t.endsWith("END:VCALENDAR"), true); });
+    test("buildIcs has correct start and end", () => { const t = buildIcs(CAL, "Tom", NOW); eq(t.includes("DTSTART:20261103T140000") && t.includes("DTEND:20261103T150000"), true); });
+    test("buildIcs escapes commas and semicolons", () => { const t = buildIcs(CAL, "Tom; B", NOW); eq(t.includes("LOCATION:Main Library\\, 2nd floor") && t.includes("Tom\\; B"), true); });
+    test("buildIcs uses CRLF line endings", () => eq(buildIcs(CAL, "Tom", NOW).includes("\r\n"), true));
+    test("buildIcs returns empty for invalid session", () => eq(buildIcs({}, "Tom", NOW), ""));
+    test("googleCalendarUrl contains dates and title", () => { const u = googleCalendarUrl(CAL, "Tom"); eq(u.startsWith("https://calendar.google.com/") && u.includes("20261103T140000") && u.includes("Study+session+with+Tom"), true); });
+    test("minutesUntil counts minutes for confirmed sessions", () => eq(minutesUntil({ ...CAL, date: "2026-11-02", time: "12:45" }, NOW), 45));
+    test("minutesUntil is null for unconfirmed sessions", () => eq(minutesUntil({ ...CAL, status: "proposed" }, NOW), null));
+
+    test("base64url round trip", () => { const src = new Uint8Array([0, 250, 251, 252, 253, 255, 1]); eq(Array.from(new Uint8Array(fromB64Url(toB64Url(src.buffer)))), Array.from(src)); });
+    test("base64url has no unsafe characters", () => eq(/[+/=]/.test(toB64Url(new Uint8Array([251, 255, 254]).buffer)), false));
+    const passed = results.filter((r) => r.ok).length;
+    const summary = document.getElementById("summary");
+    summary.textContent = passed + " / " + results.length + " tests passed";
+    summary.style.color = passed === results.length ? "#14602B" : "#8C1D18";
+    document.getElementById("results").innerHTML = results.map((r) =>
+      `<li class="${r.ok ? "pass" : "fail"}">${r.ok ? "PASS" : "FAIL"} - ${r.name}${r.msg ? " (" + r.msg + ")" : ""}</li>`).join("");
+  </script>
+</body>
+</html>
