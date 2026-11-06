@@ -6,7 +6,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, getFirestore, doc, collection,
-  setDoc, getDoc, getDocs, addDoc, updateDoc, query, where, orderBy, limit, limitToLast,
+  setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, arrayRemove, query, where, orderBy, limit, limitToLast,
   onSnapshot, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { findCompatible, pairId, isValidModule, normaliseModule, matchLabel } from "./matching.js";
@@ -15,7 +15,9 @@ import {
   describeWhen, reminderFor, averageRating, isUnread, isSeen, todayString, tsMillis,
   buildIcs, googleCalendarUrl, minutesUntil
 } from "./sessions.js";
-import { createAvatar, createChip, formatTime, toast, initThemeToggle, toB64Url, fromB64Url } from "./ui.js";
+import { createAvatar, createChip, formatTime, toast, initThemeToggle, toB64Url, fromB64Url, resizeImageFile, isPhotoDataUrl } from "./ui.js";
+import { validateGroupName, validateGroupMembers, buildGroup, memberLabel, canLeaveByDelete } from "./groups.js";
+import { buildOverpassQuery, parsePlaces, filterByKind, formatDistance, KINDS } from "./places.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDAX6Fr8co_fNhC7A6BrhucWrV_194UnMc",
@@ -44,14 +46,14 @@ const QUICK_PLACES = ["Main Library", "Campus cafe", "Study room", "Online call"
 const $ = (id) => document.getElementById(id);
 initThemeToggle();
 
-// --- State ---
+// ---- State ----
 let me = null;              // firebase user
 let profile = null;         // my profile doc data
 let requests = [];          // all request docs involving me
 let blockedUids = new Set();
 let myRatedIds = new Set(); // session ids I have rated
 let unsubs = [];            // top-level listeners
-const pairSubs = new Map(); // pairId -> { unsubs, sessions, latest, read, partnerRead }
+const pairSubs = new Map(); // pairId -> { unsubs, sessions, latest, read }
 let unsubMessages = null;
 let activePair = null;
 let activePartner = null;
@@ -60,11 +62,16 @@ let lastMatches = null;
 let deferredInstall = null;
 let startedAt = Date.now();
 let requestsReady = false;
+let pendingPhoto = "";                 // profile photo being edited (JPEG data URL or "")
+const photoCache = new Map();          // uid -> photo data URL ("" = none), for partners / requests
+let groups = [];                       // groups I belong to
+let activeGroup = null;                // group id open in the group chat
+let unsubGroupMsgs = null;
 const prevRequestStatus = new Map();   // pid -> status, to detect changes
 const announcedMessage = new Map();    // pid -> last announced message time
 const reminded = new Set();            // session ids already reminded
 
-// ---------- Helpers ----------
+// --- Helpers ----
 function makeButton(text, className, onClick) {
   const b = document.createElement("button");
   b.type = "button";
@@ -301,7 +308,7 @@ $("bio-toggle").addEventListener("change", async (e) => {
   updateBioUi();
 });
 
-// --- Offline banner + global errors ---
+// ---- Offline banner + global errors ----
 function syncOnline() { $("offline-banner").hidden = navigator.onLine; }
 window.addEventListener("online", syncOnline);
 window.addEventListener("offline", syncOnline);
@@ -311,7 +318,7 @@ window.addEventListener("unhandledrejection", (e) => {
   toast("Something went wrong. Please try again.", "error");
 });
 
-// --- Navigation ---
+// ---- Navigation ----
 function showView(name) {
   for (const v of ["home", "messages", "profile"]) {
     $("view-" + v).hidden = v !== name;
@@ -325,6 +332,7 @@ function showView(name) {
 document.querySelectorAll("#bottom-nav button").forEach((b) => {
   b.addEventListener("click", () => {
     if (b.dataset.view === "messages" && activePair) closeChat();
+    if (b.dataset.view === "messages" && activeGroup) closeGroup();
     showView(b.dataset.view);
   });
 });
@@ -375,7 +383,7 @@ function openDialog(cfg) {
   });
 }
 
-function openSessionDialog(partnerName) {
+function openSessionDialog(partnerName, place = "") {
   return new Promise((resolve) => {
     const dlg = $("session-dlg");
     if (typeof dlg.showModal !== "function") { toast("Your browser does not support this dialog.", "error"); resolve(null); return; }
@@ -385,7 +393,7 @@ function openSessionDialog(partnerName) {
     dateInput.min = todayString();
     dateInput.value = "";
     $("s-time").value = "";
-    $("s-place").value = "";
+    $("s-place").value = place;
     const quick = $("s-quick");
     quick.replaceChildren();
     for (const place of QUICK_PLACES) {
@@ -409,7 +417,7 @@ function openSessionDialog(partnerName) {
   });
 }
 
-// ---------- Auth UI ----------
+// ---- Auth UI ----
 function setAuthMode(mode) {
   authMode = mode;
   $("mode-login").setAttribute("aria-pressed", String(mode === "login"));
@@ -474,7 +482,7 @@ $("logout-btn").addEventListener("click", async () => {
   toast("You have been logged out.");
 });
 
-// --- Email verification (soft: never blocks the app) ---
+// ---- Email verification (soft: never blocks the app) ----
 function updateVerifyUi() {
   const banner = $("verify-banner");
   if (!me || me.emailVerified) { banner.hidden = true; return; }
@@ -503,18 +511,18 @@ $("verify-check").addEventListener("click", async () => {
   else toast("Not verified yet. Open the link in the email first.");
 });
 
-// --- Header / greeting ---
+// ---- Header / greeting ----
 function currentName() {
   return (profile && profile.name) || (me && me.displayName) || (me && me.email ? me.email.split("@")[0] : "Student");
 }
 function renderAppbar(name) {
-  $("appbar-avatar").replaceChildren(createAvatar(name, me ? me.uid : name, 38));
+  $("appbar-avatar").replaceChildren(createAvatar(name, me ? me.uid : name, 38, profile && profile.photo));
 }
 function renderGreeting(name) {
   $("home-title").textContent = "Hello, " + String(name).split(" ")[0];
 }
 
-// --- Profile ---
+// ---- Profile ----
 function buildToggles(hostId, values, type, groupName) {
   const host = $(hostId);
   host.replaceChildren();
@@ -545,7 +553,31 @@ function fillProfileForm(p) {
   document.querySelectorAll('input[name="format"]').forEach((i) => { i.checked = !!(p && p.format === i.value); });
   document.querySelectorAll('input[name="goal"]').forEach((i) => { i.checked = !!(p && p.goal === i.value); });
   $("p-visible").checked = p ? p.visible !== false : true;
+  pendingPhoto = p && isPhotoDataUrl(p.photo) ? p.photo : "";
+  renderPhotoPreview();
 }
+
+function renderPhotoPreview() {
+  const name = $("p-name").value.trim() || currentName();
+  $("p-photo-preview").replaceChildren(createAvatar(name, me ? me.uid : name, 72, pendingPhoto));
+  $("p-photo-remove").hidden = !pendingPhoto;
+  $("p-photo-pick").textContent = pendingPhoto ? "Change photo" : "Choose photo";
+}
+$("p-name").addEventListener("input", () => { if (!pendingPhoto) renderPhotoPreview(); });
+$("p-photo-pick").addEventListener("click", () => $("p-photo-file").click());
+$("p-photo-remove").addEventListener("click", () => { pendingPhoto = ""; renderPhotoPreview(); });
+$("p-photo-file").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    pendingPhoto = await resizeImageFile(file);
+    renderPhotoPreview();
+    toast("Photo ready. Tap Save profile to keep it.");
+  } catch (err) {
+    toast("That file could not be used as a photo. Try a JPG or PNG picture.", "error");
+  }
+});
 
 function readProfileForm() {
   return {
@@ -555,7 +587,8 @@ function readProfileForm() {
     times: checkedValues("times"),
     format: checkedValues("format")[0] || "",
     goal: checkedValues("goal")[0] || "",
-    visible: $("p-visible").checked
+    visible: $("p-visible").checked,
+    photo: pendingPhoto
   };
 }
 
@@ -631,7 +664,7 @@ function renderSummary() {
   host.appendChild(makeButton("Edit profile", "btn-ghost btn-small", () => showView("profile")));
 }
 
-// --- Install prompt ---
+// ---------- Install prompt ----------
 function isStandalone() {
   return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 }
@@ -659,7 +692,7 @@ $("install-btn").addEventListener("click", async () => {
   updateInstallCard();
 });
 
-// ---------- Partners, blocks ----------
+// ---- Partners, blocks ----
 function otherUid(r) { return (r.users || []).find((u) => u !== me.uid); }
 function partnerOf(r) {
   return r.fromUid === me.uid ? { uid: r.toUid, name: r.toName } : { uid: r.fromUid, name: r.fromName };
@@ -760,8 +793,33 @@ function syncPairSubs() {
   }
 }
 
+// photos of people I have a request with are loaded once, then cached for the session
+const photoLoading = new Set();
+function photoFor(uid) { return photoCache.get(uid) || ""; }
+async function loadPhotos() {
+  const want = requests.map(otherUid).filter((u) => u && !photoCache.has(u) && !photoLoading.has(u));
+  if (!want.length) return;
+  want.forEach((u) => photoLoading.add(u));
+  let changed = false;
+  await Promise.all(want.map(async (u) => {
+    try {
+      const snap = await getDoc(doc(db, "users", u));
+      const photo = snap.exists() && isPhotoDataUrl(snap.data().photo) ? snap.data().photo : "";
+      photoCache.set(u, photo);
+      if (photo) changed = true;
+    } catch (e) { /* try again next time */ }
+    photoLoading.delete(u);
+  }));
+  if (changed && me) {
+    renderRequests();
+    renderPartners();
+    if (activePartner) $("chat-avatar").replaceChildren(createAvatar(activePartner.name, activePartner.uid, 40, photoFor(activePartner.uid)));
+  }
+}
+
 function reconcile() {
   syncPairSubs();
+  loadPhotos();
   renderRequests();
   renderPartners();
   renderMatches();
@@ -773,7 +831,7 @@ function reconcile() {
   }
 }
 
-// --- Matches ---
+// ---- Matches ----
 function relatedUids() {
   return new Set(requests.map(otherUid));
 }
@@ -819,7 +877,7 @@ function renderMatches() {
   }
   for (const m of list) {
     const card = el("article", "card person");
-    card.appendChild(createAvatar(m.user.name, m.user.uid, 52));
+    card.appendChild(createAvatar(m.user.name, m.user.uid, 52, m.user.photo));
     const body = el("div", "person-body");
     body.append(el("div", "person-name", m.user.name), el("div", "muted", m.user.module + " - " + m.user.format));
     const chips = el("div", "chips");
@@ -839,7 +897,7 @@ function renderMatches() {
 }
 $("find-btn").addEventListener("click", findMatches);
 
-// ---------- Requests ----------
+// ---- Requests ----
 async function sendRequest(user, btn) {
   btn.disabled = true;
   btn.textContent = "Sending...";
@@ -883,7 +941,7 @@ function renderRequests() {
   }
   for (const r of incoming) {
     const card = el("article", "card person");
-    card.appendChild(createAvatar(r.fromName, r.fromUid, 48));
+    card.appendChild(createAvatar(r.fromName, r.fromUid, 48, photoFor(r.fromUid)));
     const body = el("div", "person-body");
     body.append(el("div", "person-name", r.fromName), el("div", "muted", "wants to study with you"));
     const actions = el("div", "person-actions");
@@ -897,7 +955,7 @@ function renderRequests() {
   }
   for (const r of outgoing) {
     const card = el("article", "card person");
-    card.appendChild(createAvatar(r.toName, r.toUid, 48));
+    card.appendChild(createAvatar(r.toName, r.toUid, 48, photoFor(r.toUid)));
     const body = el("div", "person-body");
     body.append(el("div", "person-name", r.toName));
     const chips = el("div", "chips");
@@ -908,7 +966,7 @@ function renderRequests() {
   }
 }
 
-// ---------- Sessions ----------
+// ---- Sessions ----
 function allSessions() {
   const list = [];
   for (const sub of pairSubs.values()) list.push(...sub.sessions);
@@ -928,8 +986,8 @@ async function postSystemMessage(pid, text) {
   } catch (e) { /* the session itself is already saved */ }
 }
 
-async function proposeSession(pid, partner) {
-  const values = await openSessionDialog(partner.name);
+async function proposeSession(pid, partner, place = "") {
+  const values = await openSessionDialog(partner.name, place);
   if (!values) return;
   try {
     await addDoc(collection(db, "requests", pid, "sessions"), {
@@ -1083,7 +1141,7 @@ function renderSessionsEverywhere() {
   updateBadges();
 }
 
-// --- Badges / unread ---
+// ---- Badges / unread ----
 function unreadPairs() {
   const ids = [];
   for (const [pid, sub] of pairSubs) {
@@ -1139,7 +1197,7 @@ function renderUnread() {
   renderPartners();
 }
 
-// --- Partners list + chat ---
+// ---- Partners list + chat ----
 function renderPartners() {
   const host = $("partners");
   host.replaceChildren();
@@ -1162,7 +1220,7 @@ function renderPartners() {
     btn.style.cursor = "pointer";
     btn.style.alignItems = "center";
     btn.setAttribute("aria-label", "Open chat with " + p.name + (unread ? " (unread message)" : ""));
-    btn.appendChild(createAvatar(p.name, p.uid, 48));
+    btn.appendChild(createAvatar(p.name, p.uid, 48, photoFor(p.uid)));
     const body = el("div", "person-body");
     const nameRow = el("div", "person-name" + (unread ? " unread" : ""), p.name);
     if (unread) { const dot = el("span", "unread-dot"); dot.setAttribute("aria-hidden", "true"); nameRow.appendChild(dot); }
@@ -1180,7 +1238,7 @@ function openChat(r) {
   activePair = r.id;
   activePartner = partnerOf(r);
   $("chat-name").textContent = activePartner.name;
-  $("chat-avatar").replaceChildren(createAvatar(activePartner.name, activePartner.uid, 40));
+  $("chat-avatar").replaceChildren(createAvatar(activePartner.name, activePartner.uid, 40, photoFor(activePartner.uid)));
   $("spot-card").hidden = true;
   $("chat-menu").hidden = true;
   $("chat-menu-btn").setAttribute("aria-expanded", "false");
@@ -1261,7 +1319,7 @@ $("session-btn").addEventListener("click", () => {
   if (activePair && activePartner) proposeSession(activePair, activePartner);
 });
 
-// --- Chat menu: report / block / remove ---
+// ---- Chat menu: report / block / remove ----
 function toggleMenu(open) {
   const menu = $("chat-menu");
   const show = open === undefined ? menu.hidden : open;
@@ -1344,7 +1402,321 @@ $("m-report").addEventListener("click", async () => {
   if (res.checked && (await endPartnership("blocked"))) closeChat();
 });
 
-// ---------- Weather-based meeting spot ----------
+// ---- Study groups ----
+function subscribeGroups() {
+  unsubs.push(onSnapshot(query(collection(db, "groups"), where("members", "array-contains", me.uid)),
+    (snap) => {
+      groups = [];
+      snap.forEach((d) => groups.push({ id: d.id, ...d.data() }));
+      groups.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      renderGroups();
+      if (activeGroup && !groups.some((g) => g.id === activeGroup)) closeGroup();
+    }, errToast));
+}
+
+function renderGroups() {
+  const host = $("groups");
+  host.replaceChildren();
+  if (!groups.length) {
+    host.appendChild(emptyState("No study groups yet", "Create one with up to 4 of your study partners."));
+    return;
+  }
+  for (const g of groups) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "card person group-card";
+    btn.style.cssText = "width:100%;text-align:left;cursor:pointer;align-items:center";
+    btn.setAttribute("aria-label", "Open group " + g.name);
+    btn.appendChild(createAvatar(g.name, g.id, 48));
+    const body = el("div", "person-body");
+    body.append(el("div", "person-name", g.name), el("div", "muted snippet", memberLabel(g, me.uid)));
+    btn.appendChild(body);
+    btn.addEventListener("click", () => openGroup(g));
+    host.appendChild(btn);
+  }
+}
+
+function openGroup(g) {
+  closeChat(true);
+  closeGroup(true);
+  activeGroup = g.id;
+  $("group-name").textContent = g.name;
+  $("group-sub").textContent = (g.members || []).length + " people";
+  $("group-avatar").replaceChildren(createAvatar(g.name, g.id, 40));
+  $("partners-panel").hidden = true;
+  $("chat-panel").hidden = true;
+  $("group-panel").hidden = false;
+  $("group-log").replaceChildren(el("div", "skeleton"));
+  unsubGroupMsgs = onSnapshot(
+    query(collection(db, "groups", g.id, "messages"), orderBy("createdAt"), limitToLast(100)),
+    (snap) => {
+      const msgs = [];
+      snap.forEach((d) => msgs.push({ id: d.id, ...d.data() }));
+      renderGroupChat(msgs);
+    },
+    errToast
+  );
+  if (window.matchMedia("(pointer: fine)").matches) $("group-input").focus();
+}
+
+function closeGroup(keepPanelState) {
+  if (unsubGroupMsgs) { unsubGroupMsgs(); unsubGroupMsgs = null; }
+  activeGroup = null;
+  if (!keepPanelState) {
+    $("group-panel").hidden = true;
+    if (me && $("chat-panel").hidden) $("partners-panel").hidden = false;
+  }
+}
+$("group-back").addEventListener("click", () => closeGroup());
+
+function renderGroupChat(msgs) {
+  const log = $("group-log");
+  log.replaceChildren();
+  if (!msgs.length) {
+    log.appendChild(emptyState("Start the conversation", "Everyone in the group can see what you write here."));
+    return;
+  }
+  for (const m of msgs) {
+    const mine = m.senderUid === me.uid;
+    const b = el("div", "bubble" + (mine ? " mine" : ""));
+    if (!mine) b.appendChild(el("span", "who", m.senderName || "Member"));
+    b.appendChild(document.createTextNode(m.text));
+    b.appendChild(el("time", "", formatTime(timestampToDate(m.createdAt))));
+    log.appendChild(b);
+  }
+  log.scrollTop = log.scrollHeight;
+}
+
+$("group-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("group-input");
+  const text = input.value.trim();
+  if (!text || !activeGroup) return;
+  input.value = "";
+  try {
+    await addDoc(collection(db, "groups", activeGroup, "messages"), {
+      senderUid: me.uid, senderName: currentName(), text: text.slice(0, 500), createdAt: serverTimestamp()
+    });
+  } catch (err) {
+    input.value = text;
+    errToast(err);
+  }
+});
+
+$("group-leave").addEventListener("click", async () => {
+  const g = groups.find((x) => x.id === activeGroup);
+  if (!g) return;
+  const res = await openDialog({
+    title: "Leave " + g.name + "?",
+    text: canLeaveByDelete(g, me.uid) ? "You are the last member, so the group will be deleted." : "You will stop receiving messages from this group.",
+    okLabel: "Leave group", danger: true
+  });
+  if (!res) return;
+  const gid = g.id;
+  try {
+    if (canLeaveByDelete(g, me.uid)) await deleteDoc(doc(db, "groups", gid));
+    else await updateDoc(doc(db, "groups", gid), { members: arrayRemove(me.uid) });
+    closeGroup();
+    toast("You left " + g.name, "info");
+  } catch (err) {
+    errToast(err);
+  }
+});
+
+function openGroupDialog() {
+  const partners = partnerPairs().map(partnerOf);
+  if (!partners.length) { toast("Accept a study partner first, then you can make a group.", "info"); return; }
+  const dlg = $("group-dlg");
+  if (typeof dlg.showModal !== "function") { toast("Your browser does not support this dialog.", "error"); return; }
+  $("g-name").value = "";
+  $("g-error").textContent = "";
+  const list = $("g-members");
+  list.replaceChildren();
+  for (const p of partners) {
+    const row = el("label", "check-row");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = p.uid;
+    row.append(box, createAvatar(p.name, p.uid, 32, photoFor(p.uid)), el("span", "", p.name));
+    list.appendChild(row);
+  }
+  $("g-cancel").onclick = () => dlg.close();
+  $("g-ok").onclick = async () => {
+    const name = $("g-name").value;
+    const chosen = [...list.querySelectorAll("input:checked")].map((i) => i.value);
+    const problem = validateGroupName(name) || validateGroupMembers(chosen);
+    if (problem) { $("g-error").textContent = problem; return; }
+    const others = partners.filter((p) => chosen.includes(p.uid));
+    const btn = $("g-ok");
+    btn.disabled = true;
+    try {
+      const data = buildGroup({ name, module: profile ? profile.module : "", ownerUid: me.uid, ownerName: currentName(), others });
+      await addDoc(collection(db, "groups"), { ...data, createdAt: serverTimestamp() });
+      dlg.close();
+      toast("Group created", "success");
+    } catch (err) {
+      $("g-error").textContent = friendlyError(err);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  dlg.showModal();
+}
+$("group-new").addEventListener("click", openGroupDialog);
+
+// ---- Study places map (Leaflet + OpenStreetMap + Overpass) ----
+const LEAFLET_VERSION = "1.9.4";
+const LEAFLET_BASE = "https://cdn.jsdelivr.net/npm/leaflet@" + LEAFLET_VERSION + "/dist/";
+const LEAFLET_CSS_SRI = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+const LEAFLET_JS_SRI = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=";
+const KIND_COLOURS = { library: "#3366CC", cafe: "#B4442B", park: "#2E7D32" };
+let leafletPromise = null;
+let mapObj = null, mapLayer = null, mapPos = null, mapPlaces = [], mapKind = "all", mapFetchedAt = 0;
+
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  if (leafletPromise) return leafletPromise;
+  leafletPromise = new Promise((resolve, reject) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = LEAFLET_BASE + "leaflet.css";
+    css.integrity = LEAFLET_CSS_SRI;
+    css.crossOrigin = "";
+    document.head.appendChild(css);
+    const js = document.createElement("script");
+    js.src = LEAFLET_BASE + "leaflet.js";
+    js.integrity = LEAFLET_JS_SRI;
+    js.crossOrigin = "";
+    js.onload = () => (window.L ? resolve(window.L) : reject(new Error("leaflet")));
+    js.onerror = () => { leafletPromise = null; reject(new Error("leaflet")); };
+    document.head.appendChild(js);
+  });
+  return leafletPromise;
+}
+
+function getPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject({ code: 0 }); return; }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+      (err) => reject(err),
+      { timeout: 10000, maximumAge: 600000 }
+    );
+  });
+}
+
+async function fetchPlaces(pos) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const res = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "data=" + encodeURIComponent(buildOverpassQuery(pos.lat, pos.lon, 1500)),
+      signal: ctrl.signal
+    });
+    if (!res.ok) throw new Error("overpass " + res.status);
+    return parsePlaces(await res.json(), pos.lat, pos.lon);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function setMapStatus(text) { $("map-status").textContent = text; }
+
+function renderMapPlaces() {
+  const L = window.L;
+  const list = filterByKind(mapPlaces, mapKind);
+  mapLayer.clearLayers();
+  L.circleMarker([mapPos.lat, mapPos.lon], { radius: 8, color: "#fff", weight: 3, fillColor: "#16213A", fillOpacity: 1 })
+    .bindTooltip("You are here").addTo(mapLayer);
+  const host = $("map-list");
+  host.replaceChildren();
+  for (const p of list) {
+    const marker = L.circleMarker([p.lat, p.lon], { radius: 10, color: "#fff", weight: 2, fillColor: KIND_COLOURS[p.kind], fillOpacity: 0.95 }).addTo(mapLayer);
+    const pop = el("div", "map-pop");
+    pop.append(el("strong", "", p.name), document.createElement("br"), document.createTextNode(KINDS[p.kind] + " - " + formatDistance(p.distance)));
+    if (activePair && activePartner) {
+      pop.appendChild(document.createElement("br"));
+      pop.appendChild(makeButton("Plan a session here", "btn-primary btn-small", () => {
+        $("map-dlg").close();
+        proposeSession(activePair, activePartner, p.name.slice(0, 60));
+      }));
+    }
+    marker.bindPopup(pop);
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.type = "button";
+    const nm = el("span", "pname", p.name);
+    b.append(nm, el("small", "", KINDS[p.kind] + " - " + formatDistance(p.distance)));
+    b.addEventListener("click", () => { mapObj.setView([p.lat, p.lon], 17); marker.openPopup(); });
+    li.appendChild(b);
+    host.appendChild(li);
+  }
+  if (!mapPlaces.length) setMapStatus("No libraries, cafes or parks found within 1.5 km. Try again from another place.");
+  else if (!list.length) setMapStatus("Nothing of that type within 1.5 km. Try \"All\".");
+  else setMapStatus(list.length + (list.length === 1 ? " place" : " places") + " within 1.5 km, nearest first.");
+}
+
+async function openMap() {
+  const dlg = $("map-dlg");
+  if (typeof dlg.showModal !== "function") { toast("Your browser does not support the map.", "error"); return; }
+  if (!dlg.open) dlg.showModal();
+  setMapStatus("Finding your location...");
+  let L, pos;
+  try {
+    L = await loadLeaflet();
+  } catch (e) {
+    setMapStatus("The map could not load. Check your internet connection and try again.");
+    return;
+  }
+  try {
+    pos = await getPosition();
+  } catch (e) {
+    setMapStatus(e && e.code === 1
+      ? "Location permission was denied. Allow location for this site to see study places near you."
+      : "Could not find your location. Try again outdoors or near a window.");
+    return;
+  }
+  if (!mapObj) {
+    mapObj = L.map("map-canvas", { zoomControl: true, attributionControl: true });
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19, attribution: "&copy; OpenStreetMap contributors"
+    }).addTo(mapObj);
+    mapLayer = L.layerGroup().addTo(mapObj);
+  }
+  mapObj.setView([pos.lat, pos.lon], 15);
+  setTimeout(() => mapObj.invalidateSize(), 80);
+  const moved = !mapPos || Math.abs(mapPos.lat - pos.lat) > 0.002 || Math.abs(mapPos.lon - pos.lon) > 0.002;
+  mapPos = pos;
+  if (moved || Date.now() - mapFetchedAt > 10 * 60 * 1000) {
+    setMapStatus("Searching nearby...");
+    try {
+      mapPlaces = await fetchPlaces(pos);
+      mapFetchedAt = Date.now();
+    } catch (e) {
+      mapPlaces = [];
+      mapLayer.clearLayers();
+      $("map-list").replaceChildren();
+      setMapStatus("Could not load nearby places right now. Please try again in a moment.");
+      return;
+    }
+  }
+  renderMapPlaces();
+}
+
+document.querySelectorAll(".map-filter button").forEach((b) => {
+  b.addEventListener("click", () => {
+    mapKind = b.dataset.kind;
+    document.querySelectorAll(".map-filter button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    if (mapObj && mapPos && (mapPlaces.length || mapFetchedAt)) renderMapPlaces();
+  });
+});
+$("map-open").addEventListener("click", openMap);
+$("map-btn").addEventListener("click", openMap);
+$("map-close").addEventListener("click", () => $("map-dlg").close());
+
+// ---- Weather-based meeting spot ----
 const WEATHER = [
   [[0], "clear sky"], [[1, 2, 3], "cloudy"], [[45, 48], "foggy"],
   [[51, 53, 55, 56, 57], "drizzly"], [[61, 63, 65, 66, 67, 80, 81, 82], "rainy"],
@@ -1387,13 +1759,18 @@ $("spot-btn").addEventListener("click", () => {
   );
 });
 
-// ---------- Auth state ----------
+// ---- Auth state ----
 function cleanupSession() {
   unsubs.forEach((u) => u());
   unsubs = [];
   for (const sub of pairSubs.values()) sub.unsubs.forEach((u) => u());
   pairSubs.clear();
   closeChat();
+  closeGroup();
+  groups = [];
+  photoCache.clear();
+  photoLoading.clear();
+  pendingPhoto = "";
   requests = [];
   blockedUids = new Set();
   myRatedIds = new Set();
@@ -1433,6 +1810,7 @@ onAuthStateChanged(auth, async (user) => {
   subscribeBlocks();
   subscribeRatings();
   subscribeRequests();
+  subscribeGroups();
   if (profile) {
     showView("home");
     findMatches();
