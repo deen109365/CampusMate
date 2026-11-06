@@ -28,7 +28,7 @@
   <div id="offline-banner" class="offline-banner" role="status" hidden>You are offline. Showing saved data; messages will send when you reconnect.</div>
   <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
 
-  <!-- === AUTH === -->
+  <!-- ============ AUTH ============ -->
   <section id="auth-section" aria-labelledby="auth-title">
     <div class="hero">
       <button type="button" class="icon-btn theme-toggle" aria-label="Switch between light and dark mode">
@@ -69,10 +69,10 @@
         <button id="auth-submit" class="btn btn-primary btn-block" type="submit">Log in</button>
       </form>
     </div>
-    <p class="fineprint">Your location is never stored. Only your name, module and availability are shared with other students.</p>
+    <p class="fineprint">Your location is never stored. Only your name, module, availability and optional photo are shared with other students.</p>
   </section>
 
-  <!-- === APP === -->
+  <!-- ============ APP ============ -->
   <div id="app-section" hidden>
     <header class="appbar">
       <div class="brand"><span class="brand-mark" aria-hidden="true">CM</span><span class="brand-name">CampusMate</span></div>
@@ -106,6 +106,11 @@
 
         <div id="profile-summary" class="card summary"></div>
 
+        <div class="card map-promo">
+          <div><strong>Study places near you</strong><p class="muted">Libraries, cafes and parks on a map.</p></div>
+          <button id="map-open" class="btn btn-ghost btn-small" type="button">Open map</button>
+        </div>
+
         <div class="section-head"><h3>Study sessions</h3></div>
         <div id="home-sessions" class="stack" aria-live="polite"></div>
 
@@ -123,7 +128,32 @@
       <section id="view-messages" class="view" aria-labelledby="messages-title" hidden>
         <div id="partners-panel">
           <div class="greeting"><h2 id="messages-title">Messages</h2></div>
+          <div class="section-head"><h3>Study groups</h3><button id="group-new" class="btn btn-ghost btn-small" type="button">New group</button></div>
+          <div id="groups" class="stack"></div>
+          <div class="section-head"><h3>Partners</h3></div>
           <div id="partners" class="stack"></div>
+        </div>
+
+        <div id="group-panel" class="chat" hidden>
+          <div class="chat-head">
+            <button id="group-back" class="icon-btn" type="button" aria-label="Back to messages">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div id="group-avatar"></div>
+            <div class="chat-title">
+              <strong id="group-name">Group</strong>
+              <span id="group-sub" class="muted"></span>
+            </div>
+            <button id="group-leave" class="btn btn-ghost btn-small" type="button">Leave</button>
+          </div>
+          <div id="group-log" class="chat-log" role="log" aria-live="polite" aria-label="Group conversation"></div>
+          <form id="group-form" class="chat-form" autocomplete="off">
+            <label for="group-input" class="sr-only">Message the group</label>
+            <input id="group-input" type="text" maxlength="500" placeholder="Message the group" required>
+            <button class="btn btn-primary send-btn" type="submit" aria-label="Send message">
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 11.5L21 3l-8.5 18-2-7.5z" fill="currentColor"/></svg>
+            </button>
+          </form>
         </div>
 
         <div id="chat-panel" class="chat" hidden>
@@ -153,6 +183,7 @@
           <div class="chat-tools">
             <button id="session-btn" class="btn btn-ghost btn-small" type="button">Plan a session</button>
             <button id="spot-btn" class="btn btn-ghost btn-small" type="button">Suggest a spot</button>
+            <button id="map-btn" class="btn btn-ghost btn-small" type="button">Map</button>
           </div>
           <form id="chat-form" class="chat-form" autocomplete="off">
             <label for="chat-input" class="sr-only">Message</label>
@@ -171,6 +202,18 @@
           <p class="muted">Tell us when and how you like to study.</p>
         </div>
         <form id="profile-form" class="card" novalidate>
+          <div class="field photo-field">
+            <div id="p-photo-preview" class="photo-preview"></div>
+            <div class="photo-actions">
+              <strong id="p-photo-label">Profile photo</strong>
+              <small class="hint">Optional. Shown to students you match with.</small>
+              <div class="person-actions">
+                <button id="p-photo-pick" class="btn btn-ghost btn-small" type="button">Choose photo</button>
+                <button id="p-photo-remove" class="btn btn-ghost btn-small" type="button" hidden>Remove</button>
+              </div>
+              <input id="p-photo-file" type="file" accept="image/*" hidden aria-labelledby="p-photo-label">
+            </div>
+          </div>
           <div class="field">
             <label for="p-name">Display name</label>
             <input id="p-name" type="text" maxlength="40" required>
@@ -303,6 +346,43 @@
       <button id="session-cancel" class="btn btn-ghost" type="button">Cancel</button>
       <button id="session-ok" class="btn btn-primary" type="button">Send proposal</button>
     </div>
+  </dialog>
+
+  <dialog id="group-dlg" aria-labelledby="group-dlg-title">
+    <h2 id="group-dlg-title">New study group</h2>
+    <p class="muted">Add up to 4 of your study partners. Everyone in the group can read and write messages.</p>
+    <div class="field">
+      <label for="g-name">Group name</label>
+      <input id="g-name" type="text" maxlength="40" placeholder="e.g. CS32005 revision">
+    </div>
+    <fieldset class="field">
+      <legend>Members</legend>
+      <div id="g-members" class="check-list"></div>
+    </fieldset>
+    <p id="g-error" class="form-message" role="alert"></p>
+    <div class="dlg-actions">
+      <button id="g-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="g-ok" class="btn btn-primary" type="button">Create group</button>
+    </div>
+  </dialog>
+
+  <dialog id="map-dlg" class="map-dlg" aria-labelledby="map-title">
+    <div class="map-head">
+      <h2 id="map-title">Study places near you</h2>
+      <button id="map-close" class="icon-btn" type="button" aria-label="Close map">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="segmented map-filter" role="group" aria-label="Filter places">
+      <button type="button" data-kind="all" aria-pressed="true">All</button>
+      <button type="button" data-kind="library" aria-pressed="false">Libraries</button>
+      <button type="button" data-kind="cafe" aria-pressed="false">Cafes</button>
+      <button type="button" data-kind="park" aria-pressed="false">Parks</button>
+    </div>
+    <div id="map-canvas" class="map-canvas" role="application" aria-label="Map of study places"></div>
+    <p id="map-status" class="muted map-status" role="status">Finding your location...</p>
+    <ul id="map-list" class="map-list"></ul>
+    <p class="fineprint map-credit">Map data © OpenStreetMap contributors. Your position is used only to search and is not saved.</p>
   </dialog>
 
   <script type="module" src="app.js"></script>
