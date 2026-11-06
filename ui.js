@@ -17,14 +17,61 @@ export function colourFor(seed) {
   return PALETTE[h % PALETTE.length];
 }
 
-export function createAvatar(name, seed, size = 44) {
+// A profile photo is stored as a small JPEG data URL inside the user's Firestore profile.
+export const PHOTO_PREFIX = "data:image/jpeg;base64,";
+export const PHOTO_MAX_CHARS = 40000;
+
+export function isPhotoDataUrl(value) {
+  return typeof value === "string" && value.startsWith(PHOTO_PREFIX) &&
+    value.length > PHOTO_PREFIX.length && value.length <= PHOTO_MAX_CHARS &&
+    /^[A-Za-z0-9+/=]+$/.test(value.slice(PHOTO_PREFIX.length));
+}
+
+// Centre-crop square: which part of a w x h picture to copy so the result is square.
+export function squareCrop(w, h) {
+  const s = Math.min(w, h);
+  return { sx: Math.round((w - s) / 2), sy: Math.round((h - s) / 2), s };
+}
+
+export function resizeImageFile(file, size = 160, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\//.test(file.type || "")) { reject(new Error("not-an-image")); return; }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const { sx, sy, s } = squareCrop(img.naturalWidth, img.naturalHeight);
+        if (!s) throw new Error("empty-image");
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, size, size);
+        ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size);
+        let q = quality, out = canvas.toDataURL("image/jpeg", q);
+        while (out.length > PHOTO_MAX_CHARS && q > 0.3) { q -= 0.1; out = canvas.toDataURL("image/jpeg", q); }
+        if (!isPhotoDataUrl(out)) throw new Error("too-large");
+        resolve(out);
+      } catch (e) { reject(e); } finally { URL.revokeObjectURL(url); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("bad-image")); };
+    img.src = url;
+  });
+}
+
+export function createAvatar(name, seed, size = 44, photo = "") {
   const el = document.createElement("div");
   el.className = "avatar";
   el.setAttribute("aria-hidden", "true");
   el.style.width = el.style.height = size + "px";
   el.style.fontSize = Math.round(size * 0.38) + "px";
   el.style.background = colourFor(seed || name);
-  el.textContent = initials(name);
+  if (isPhotoDataUrl(photo)) {
+    el.classList.add("avatar-photo");
+    el.style.backgroundImage = 'url("' + photo + '")';
+  } else {
+    el.textContent = initials(name);
+  }
   return el;
 }
 
