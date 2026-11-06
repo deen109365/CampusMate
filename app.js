@@ -15,7 +15,7 @@ import {
   describeWhen, reminderFor, averageRating, isUnread, isSeen, todayString, tsMillis,
   buildIcs, googleCalendarUrl, minutesUntil
 } from "./sessions.js";
-import { createAvatar, createChip, formatTime, toast, initThemeToggle, toB64Url, fromB64Url, resizeImageFile, isPhotoDataUrl } from "./ui.js";
+import { createAvatar, createChip, formatTime, toast, initThemeToggle, toB64Url, fromB64Url, loadImageFile, cropRect, cropToDataUrl, isPhotoDataUrl } from "./ui.js";
 import { validateGroupName, validateGroupMembers, buildGroup, memberLabel, canLeaveByDelete } from "./groups.js";
 import { buildOverpassQuery, parsePlaces, filterByKind, formatDistance, KINDS } from "./places.js";
 
@@ -71,7 +71,7 @@ const prevRequestStatus = new Map();   // pid -> status, to detect changes
 const announcedMessage = new Map();    // pid -> last announced message time
 const reminded = new Set();            // session ids already reminded
 
-// --- Helpers ----
+// ---- Helpers ----
 function makeButton(text, className, onClick) {
   const b = document.createElement("button");
   b.type = "button";
@@ -117,7 +117,7 @@ function timestampToDate(ts) {
   return ms ? new Date(ms) : null;
 }
 
-// --- Notifications ---
+// ---- Notifications ----
 const NOTIFY_KEY = "campusmate-notify";
 function notifySupported() { return "Notification" in window; }
 function notifyEnabled() {
@@ -192,7 +192,7 @@ function checkSessionReminders() {
 }
 setInterval(checkSessionReminders, 30000);
 
-// ---------- Biometric lock (WebAuthn platform authenticator) ----------
+// ---- Biometric lock (WebAuthn platform authenticator) ----
 const RELOCK_MS = 2 * 60 * 1000;
 let hiddenAt = 0;
 const bioKey = () => "campusmate-bio-" + (me ? me.uid : "");
@@ -337,7 +337,7 @@ document.querySelectorAll("#bottom-nav button").forEach((b) => {
   });
 });
 
-// --- Dialogs ---
+// ---- Dialogs ----
 function openDialog(cfg) {
   const { title, text = "", okLabel = "OK", danger = false, textarea = null, checkbox = null } = cfg;
   return new Promise((resolve) => {
@@ -571,13 +571,92 @@ $("p-photo-file").addEventListener("change", async (e) => {
   e.target.value = "";
   if (!file) return;
   try {
-    pendingPhoto = await resizeImageFile(file);
-    renderPhotoPreview();
-    toast("Photo ready. Tap Save profile to keep it.");
+    openCropper(await loadImageFile(file));
   } catch (err) {
     toast("That file could not be used as a photo. Try a JPG or PNG picture.", "error");
   }
 });
+
+// ---- Photo cropper: drag to position, slider to zoom ----
+const CROP_PX = 280;
+let cropState = null;   // { img, url, zoom, cx, cy }
+
+function drawCrop() {
+  const st = cropState;
+  if (!st) return;
+  const r = cropRect(st.img.naturalWidth, st.img.naturalHeight, st.zoom, st.cx, st.cy);
+  st.cx = r.sx + r.s / 2;
+  st.cy = r.sy + r.s / 2;
+  const ctx = $("crop-canvas").getContext("2d");
+  ctx.clearRect(0, 0, CROP_PX, CROP_PX);
+  ctx.drawImage(st.img, r.sx, r.sy, r.s, r.s, 0, 0, CROP_PX, CROP_PX);
+  ctx.save();
+  ctx.fillStyle = "rgba(10,16,32,.55)";
+  ctx.beginPath();
+  ctx.rect(0, 0, CROP_PX, CROP_PX);
+  ctx.arc(CROP_PX / 2, CROP_PX / 2, CROP_PX / 2 - 4, 0, Math.PI * 2, true);
+  ctx.fill("evenodd");
+  ctx.restore();
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(CROP_PX / 2, CROP_PX / 2, CROP_PX / 2 - 4, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function moveCrop(dxCanvas, dyCanvas) {
+  const st = cropState;
+  if (!st) return;
+  const side = Math.min(st.img.naturalWidth, st.img.naturalHeight) / st.zoom;
+  const scale = side / $("crop-canvas").getBoundingClientRect().width;
+  st.cx -= dxCanvas * scale;
+  st.cy -= dyCanvas * scale;
+  drawCrop();
+}
+
+function openCropper(loaded) {
+  const dlg = $("crop-dlg");
+  if (typeof dlg.showModal !== "function") { toast("Your browser does not support photo cropping.", "error"); URL.revokeObjectURL(loaded.url); return; }
+  cropState = { img: loaded.img, url: loaded.url, zoom: 1, cx: loaded.img.naturalWidth / 2, cy: loaded.img.naturalHeight / 2 };
+  $("crop-zoom").value = "1";
+  dlg.showModal();
+  drawCrop();
+}
+
+(function initCropper() {
+  const canvas = $("crop-canvas");
+  let last = null;
+  canvas.addEventListener("pointerdown", (e) => { last = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!last) return;
+    moveCrop(e.clientX - last.x, e.clientY - last.y);
+    last = { x: e.clientX, y: e.clientY };
+  });
+  const stop = () => { last = null; };
+  canvas.addEventListener("pointerup", stop);
+  canvas.addEventListener("pointercancel", stop);
+  canvas.addEventListener("keydown", (e) => {
+    const step = 14, d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    if (d) { e.preventDefault(); moveCrop(d[0], d[1]); }
+  });
+  $("crop-zoom").addEventListener("input", (e) => { if (cropState) { cropState.zoom = Number(e.target.value); drawCrop(); } });
+  $("crop-cancel").addEventListener("click", () => $("crop-dlg").close());
+  $("crop-dlg").addEventListener("close", () => {
+    if (cropState) { URL.revokeObjectURL(cropState.url); cropState = null; }
+  });
+  $("crop-ok").addEventListener("click", () => {
+    if (!cropState) return;
+    try {
+      const st = cropState;
+      pendingPhoto = cropToDataUrl(st.img, cropRect(st.img.naturalWidth, st.img.naturalHeight, st.zoom, st.cx, st.cy));
+      $("crop-dlg").close();
+      renderPhotoPreview();
+      toast("Photo ready. Tap Save profile to keep it.");
+    } catch (err) {
+      toast("That photo could not be used. Try another picture.", "error");
+    }
+  });
+})();
 
 function readProfileForm() {
   return {
@@ -664,7 +743,7 @@ function renderSummary() {
   host.appendChild(makeButton("Edit profile", "btn-ghost btn-small", () => showView("profile")));
 }
 
-// ---------- Install prompt ----------
+// ---- Install prompt ----
 function isStandalone() {
   return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 }
