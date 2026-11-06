@@ -1,8 +1,9 @@
 // Network-first service worker: always tries the network, falls back to cache offline.
-const CACHE = "campusmate-v6";
+const CACHE = "campusmate-v7";
 const FIREBASE_CDN = "https://www.gstatic.com/firebasejs/";
+const LEAFLET_CDN = "https://cdn.jsdelivr.net/npm/leaflet@1.9.4/"; // versioned, never changes
 const SHELL = [
-  "./", "./index.html", "./style.css", "./app.js", "./ui.js", "./matching.js", "./sessions.js",
+  "./", "./index.html", "./style.css", "./app.js", "./ui.js", "./matching.js", "./sessions.js", "./groups.js", "./places.js",
   "./manifest.json", "./icon-192.png", "./icon-512.png"
 ];
 
@@ -24,8 +25,8 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
-  // Firebase SDK files are versioned and never change, so serve them cache-first (works offline)
-  if (req.url.startsWith(FIREBASE_CDN)) {
+  // Firebase SDK and Leaflet files are versioned and never change, so serve them cache-first (works offline)
+  if (req.url.startsWith(FIREBASE_CDN) || req.url.startsWith(LEAFLET_CDN)) {
     event.respondWith(
       caches.match(req).then((hit) => hit || fetch(req).then((res) => {
         if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {}); }
