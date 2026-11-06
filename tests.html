@@ -20,7 +20,7 @@
   <ul id="results"></ul>
   <script type="module">
     import { overlap, formatsCompatible, pairId, isValidModule, normaliseModule, matchLabel, findCompatible } from "./matching.js";
-    import { initials, colourFor, PALETTE, toB64Url, fromB64Url, isPhotoDataUrl, squareCrop, PHOTO_PREFIX } from "./ui.js";
+    import { initials, colourFor, PALETTE, toB64Url, fromB64Url, isPhotoDataUrl, squareCrop, cropRect, PHOTO_PREFIX } from "./ui.js";
     import { haversineM, formatDistance, buildOverpassQuery, parsePlaces, filterByKind } from "./places.js";
     import { validateGroupName, validateGroupMembers, buildGroup, requiredPairIds, memberLabel, canLeaveByDelete, MAX_GROUP_MEMBERS } from "./groups.js";
     import {
@@ -156,6 +156,11 @@
     test("isPhotoDataUrl rejects oversized photos", () => eq(isPhotoDataUrl(PHOTO_PREFIX + "A".repeat(40000)), false));
     test("squareCrop centres a landscape picture", () => eq(squareCrop(400, 200), { sx: 100, sy: 0, s: 200 }));
     test("squareCrop centres a portrait picture", () => eq(squareCrop(200, 500), { sx: 0, sy: 150, s: 200 }));
+
+    test("cropRect at zoom 1 is the largest centred square", () => eq(cropRect(400, 200, 1), { sx: 100, sy: 0, s: 200 }));
+    test("cropRect zoom 2 halves the square", () => eq(cropRect(400, 200, 2).s, 100));
+    test("cropRect follows the chosen centre", () => eq(cropRect(400, 200, 2, 300, 100), { sx: 250, sy: 50, s: 100 }));
+    test("cropRect never leaves the picture", () => { const r = cropRect(400, 200, 2, 9999, -50); eq([r.sx, r.sy], [300, 0]); });
 
     // ---- study places (OpenStreetMap) ----
     test("haversine of the same point is 0", () => eq(Math.round(haversineM(56.46, -2.97, 56.46, -2.97)), 0));
