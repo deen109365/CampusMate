@@ -62,7 +62,7 @@ button, input { font: inherit; color: inherit; }
 .toast.out { opacity: 0; transform: translateY(8px); transition: .3s; }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 
-/* ---- Buttons ---- */
+/* ---------- Buttons ---------- */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 20px; border: 0; border-radius: 14px; font-weight: 650; cursor: pointer; transition: transform .1s, box-shadow .15s, background .15s; }
 .btn:active { transform: scale(.97); }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
@@ -117,7 +117,7 @@ input[type="text"]:focus, input[type="email"]:focus, input[type="password"]:focu
 .segmented button[aria-pressed="true"] { background: var(--surface); color: var(--brand-dark); box-shadow: 0 1px 4px rgba(22,33,58,.15); }
 .fineprint { margin-top: 18px; font-size: 13px; color: var(--muted); text-align: center; }
 
-/* ---- App shell ----*/
+/* ---- App shell ---- */
 .appbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between; padding: calc(10px + env(safe-area-inset-top)) 16px 10px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; }
 .brand-mark { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; color: #fff; font-size: 14px; background: linear-gradient(135deg, var(--brand), var(--brand-2)); }
@@ -262,7 +262,7 @@ dialog { max-height: 92dvh; overflow-y: auto; }
 .lock-card h2 { font-size: 22px; margin-bottom: 4px; }
 .lock-card .form-message { margin-top: 10px; }
 
-/* ----- Polish ----- */
+/* ---- Polish ---- */
 .link-btn { display: block; margin: -4px 0 4px auto; min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--brand-dark); font-weight: 650; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .noscript { padding: 14px 16px; text-align: center; background: #FFE7A8; color: #3B2A00; }
 
@@ -300,3 +300,6 @@ dialog { max-height: 92dvh; overflow-y: auto; }
 .bubble .who { display: block; font-size: 12px; font-weight: 700; opacity: .8; margin-bottom: 2px; }
 .map-pop { font: inherit; }
 .map-pop .btn { margin-top: 8px; min-height: 40px; }
+.crop-canvas { display: block; width: min(100%, 280px); aspect-ratio: 1; margin: 0 auto 14px; border-radius: 16px; background: var(--surface-2); touch-action: none; cursor: grab; }
+.crop-canvas:active { cursor: grabbing; }
+.crop-zoom input[type="range"] { width: 100%; min-height: 44px; accent-color: var(--brand); }
