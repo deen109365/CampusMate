@@ -33,30 +33,37 @@ export function squareCrop(w, h) {
   return { sx: Math.round((w - s) / 2), sy: Math.round((h - s) / 2), s };
 }
 
-export function resizeImageFile(file, size = 160, quality = 0.72) {
+// Which square of a w x h picture to copy. zoom >= 1 (1 = largest square, 4 = a quarter of it),
+// (cx, cy) = wanted centre in picture pixels. The square is always kept inside the picture.
+export function cropRect(w, h, zoom = 1, cx = w / 2, cy = h / 2) {
+  const s = Math.min(w, h) / Math.max(1, Number(zoom) || 1);
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+  return { sx: clamp(cx - s / 2, 0, w - s), sy: clamp(cy - s / 2, 0, h - s), s };
+}
+
+export function loadImageFile(file) {
   return new Promise((resolve, reject) => {
     if (!file || !/^image\//.test(file.type || "")) { reject(new Error("not-an-image")); return; }
     const url = URL.createObjectURL(file);
     const img = new Image();
-    img.onload = () => {
-      try {
-        const { sx, sy, s } = squareCrop(img.naturalWidth, img.naturalHeight);
-        if (!s) throw new Error("empty-image");
-        const canvas = document.createElement("canvas");
-        canvas.width = canvas.height = size;
-        const ctx = canvas.getContext("2d");
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(0, 0, size, size);
-        ctx.drawImage(img, sx, sy, s, s, 0, 0, size, size);
-        let q = quality, out = canvas.toDataURL("image/jpeg", q);
-        while (out.length > PHOTO_MAX_CHARS && q > 0.3) { q -= 0.1; out = canvas.toDataURL("image/jpeg", q); }
-        if (!isPhotoDataUrl(out)) throw new Error("too-large");
-        resolve(out);
-      } catch (e) { reject(e); } finally { URL.revokeObjectURL(url); }
-    };
+    img.onload = () => resolve({ img, url });
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("bad-image")); };
     img.src = url;
   });
+}
+
+// Copy the chosen square into a small JPEG data URL that fits the size limit.
+export function cropToDataUrl(img, rect, size = 160, quality = 0.72) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, size, size);
+  ctx.drawImage(img, rect.sx, rect.sy, rect.s, rect.s, 0, 0, size, size);
+  let q = quality, out = canvas.toDataURL("image/jpeg", q);
+  while (out.length > PHOTO_MAX_CHARS && q > 0.3) { q -= 0.1; out = canvas.toDataURL("image/jpeg", q); }
+  if (!isPhotoDataUrl(out)) throw new Error("too-large");
+  return out;
 }
 
 export function createAvatar(name, seed, size = 44, photo = "") {
