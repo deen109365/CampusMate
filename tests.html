@@ -20,7 +20,9 @@
   <ul id="results"></ul>
   <script type="module">
     import { overlap, formatsCompatible, pairId, isValidModule, normaliseModule, matchLabel, findCompatible } from "./matching.js";
-    import { initials, colourFor, PALETTE, toB64Url, fromB64Url } from "./ui.js";
+    import { initials, colourFor, PALETTE, toB64Url, fromB64Url, isPhotoDataUrl, squareCrop, PHOTO_PREFIX } from "./ui.js";
+    import { haversineM, formatDistance, buildOverpassQuery, parsePlaces, filterByKind } from "./places.js";
+    import { validateGroupName, validateGroupMembers, buildGroup, requiredPairIds, memberLabel, canLeaveByDelete, MAX_GROUP_MEMBERS } from "./groups.js";
     import {
       tsMillis, todayString, sessionStart, validateSession, isActive, isUpcoming, needsRating,
       pendingForMe, sortByStart, describeWhen, reminderFor, averageRating, isUnread, isSeen,
@@ -76,7 +78,7 @@
       eq(PALETTE.includes(colourFor("abc")), true);
     });
 
-    // --- sessions ---
+    // ---- sessions ----
     const NOW = new Date(2026, 10, 2, 12, 0, 0); // Mon 2 Nov 2026 12:00
     const S = (o) => ({ id: "s1", date: "2026-11-03", time: "10:00", place: "Library", status: "accepted", proposedBy: "a", ...o });
     test("validateSession accepts a valid future session", () => eq(validateSession({ date: "2026-11-03", time: "10:00", place: "Library" }, NOW), ""));
@@ -113,7 +115,7 @@
     test("isUnread false for my own message", () => eq(isUnread({ senderUid: "me", createdAt: { toDate: () => new Date(2000) } }, null, "me"), false));
     test("isUnread true when never read", () => eq(isUnread({ senderUid: "b", createdAt: { toDate: () => new Date(2000) } }, null, "me"), true));
 
-    // --- study goal + seen ---
+    // ---- study goal + seen ----
     const meG = { ...me, goal: "Coursework" };
     test("same study goal ranks higher with equal overlap", () => {
       const r = findCompatible(meG, [mk({ uid: "other", goal: "Exam revision" }), mk({ uid: "same", goal: "Coursework" })]);
@@ -131,7 +133,7 @@
     test("isSeen false when partner never read", () => eq(isSeen(MSG, null), false));
     test("isSeen false for a message still being sent", () => eq(isSeen({ senderUid: "me", createdAt: null }, { at: { toDate: () => new Date(2000) } }), false));
 
-    // --- calendar ---
+    // ---- calendar ----
     const CAL = { id: "s9", date: "2026-11-03", time: "14:00", place: "Main Library, 2nd floor", status: "accepted" };
     test("sessionTimes gives start and a one hour end", () => eq(sessionTimes(CAL), { start: "20261103T140000", end: "20261103T150000" }));
     test("sessionTimes rolls over midnight", () => eq(sessionTimes({ date: "2026-11-03", time: "23:30" }).end, "20261104T003000"));
@@ -146,6 +148,54 @@
 
     test("base64url round trip", () => { const src = new Uint8Array([0, 250, 251, 252, 253, 255, 1]); eq(Array.from(new Uint8Array(fromB64Url(toB64Url(src.buffer)))), Array.from(src)); });
     test("base64url has no unsafe characters", () => eq(/[+/=]/.test(toB64Url(new Uint8Array([251, 255, 254]).buffer)), false));
+    // ---- profile photo ----
+    test("isPhotoDataUrl accepts a small jpeg data URL", () => eq(isPhotoDataUrl(PHOTO_PREFIX + "AAAA"), true));
+    test("isPhotoDataUrl rejects a png data URL", () => eq(isPhotoDataUrl("data:image/png;base64,AAAA"), false));
+    test("isPhotoDataUrl rejects non-strings and empty data", () => eq([isPhotoDataUrl(null), isPhotoDataUrl(""), isPhotoDataUrl(PHOTO_PREFIX)], [false, false, false]));
+    test("isPhotoDataUrl rejects characters that could break out of url()", () => eq(isPhotoDataUrl(PHOTO_PREFIX + 'AA")x'), false));
+    test("isPhotoDataUrl rejects oversized photos", () => eq(isPhotoDataUrl(PHOTO_PREFIX + "A".repeat(40000)), false));
+    test("squareCrop centres a landscape picture", () => eq(squareCrop(400, 200), { sx: 100, sy: 0, s: 200 }));
+    test("squareCrop centres a portrait picture", () => eq(squareCrop(200, 500), { sx: 0, sy: 150, s: 200 }));
+
+    // ---- study places (OpenStreetMap) ----
+    test("haversine of the same point is 0", () => eq(Math.round(haversineM(56.46, -2.97, 56.46, -2.97)), 0));
+    test("haversine 0.01 degrees of latitude is about 1.1 km", () => { const d = haversineM(56, 0, 56.01, 0); eq(d > 1100 && d < 1120, true); });
+    test("formatDistance shows metres under 1 km", () => eq(formatDistance(347), "350 m"));
+    test("formatDistance shows km from 1 km", () => eq(formatDistance(1260), "1.3 km"));
+    test("formatDistance handles bad input", () => eq(formatDistance(NaN), ""));
+    test("overpass query contains the radius and coordinates", () => { const q = buildOverpassQuery(56.4600, -2.9700, 1500); eq(q.includes("around:1500,56.4600,-2.9700") && q.includes("library|cafe") && q.includes("out center"), true); });
+    test("overpass radius is clamped to 5 km", () => eq(buildOverpassQuery(1, 1, 99999).includes("around:5000"), true));
+    test("overpass query rejects bad coordinates", () => { let bad = false; try { buildOverpassQuery("x", 1); } catch (e) { bad = true; } eq(bad, true); });
+    const OV = { elements: [
+      { type: "node", id: 1, lat: 56.461, lon: -2.97, tags: { amenity: "cafe", name: "Near Cafe" } },
+      { type: "way", id: 2, center: { lat: 56.47, lon: -2.97 }, tags: { amenity: "library", name: "Far Library" } },
+      { type: "node", id: 3, lat: 56.462, lon: -2.97, tags: { amenity: "cafe" } },
+      { type: "node", id: 4, lat: 56.4615, lon: -2.97, tags: { leisure: "park", name: "Green Park" } },
+      { type: "node", id: 5, lat: 56.4611, lon: -2.97, tags: { amenity: "cafe", name: "near cafe" } },
+      { type: "node", id: 6, tags: { amenity: "cafe", name: "No Position" } }
+    ] };
+    const PL = parsePlaces(OV, 56.46, -2.97);
+    test("parsePlaces drops unnamed, duplicate and position-less entries", () => eq(PL.length, 3));
+    test("parsePlaces sorts nearest first", () => eq(PL.map((p) => p.name), ["Near Cafe", "Green Park", "Far Library"]));
+    test("parsePlaces reads way centres and assigns kinds", () => eq(PL.map((p) => p.kind), ["cafe", "park", "library"]));
+    test("parsePlaces survives empty or broken data", () => eq([parsePlaces(null, 0, 0).length, parsePlaces({}, 0, 0).length], [0, 0]));
+    test("filterByKind keeps only that kind", () => eq(filterByKind(PL, "cafe").length, 1));
+    test("filterByKind all returns everything", () => eq(filterByKind(PL, "all").length, 3));
+
+    // ---- study groups ----
+    test("group name must be at least 2 characters", () => eq(validateGroupName(" a ") !== "", true));
+    test("group name accepts a normal name", () => eq(validateGroupName("CS32005 revision"), ""));
+    test("group name rejects over 40 characters", () => eq(validateGroupName("x".repeat(41)) !== "", true));
+    test("group needs at least one partner", () => eq(validateGroupMembers([]) !== "", true));
+    test("group allows up to 4 partners plus me", () => eq(validateGroupMembers(["a", "b", "c", "d"]), ""));
+    test("group rejects 5 partners (6 people)", () => eq(validateGroupMembers(["a", "b", "c", "d", "e"]) !== "", true));
+    test("max group size is 5", () => eq(MAX_GROUP_MEMBERS, 5));
+    const G = buildGroup({ name: "  Revision  ", module: "CS32005", ownerUid: "me", ownerName: "Deen", others: [{ uid: "a", name: "Ann" }, { uid: "a", name: "Ann again" }, { uid: "me", name: "Deen" }, { uid: "b", name: "Bob" }] });
+    test("buildGroup puts the creator first and removes duplicates", () => eq(G.members, ["me", "a", "b"]));
+    test("buildGroup trims the name and stores member names", () => eq([G.name, G.memberNames.a, G.memberNames.me], ["Revision", "Ann", "Deen"]));
+    test("requiredPairIds lists a sorted pair id per other member", () => eq(requiredPairIds("m", ["a", "m", "z"]), ["a_m", "m_z"]));
+    test("memberLabel shows You for me", () => eq(memberLabel(G, "me"), "You, Ann, Bob"));
+    test("canLeaveByDelete only for the last member", () => eq([canLeaveByDelete({ members: ["me"] }, "me"), canLeaveByDelete(G, "me")], [true, false]));
     const passed = results.filter((r) => r.ok).length;
     const summary = document.getElementById("summary");
     summary.textContent = passed + " / " + results.length + " tests passed";
