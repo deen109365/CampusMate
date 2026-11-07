@@ -72,10 +72,13 @@ export function createAvatar(name, seed, size = 44, photo = "") {
   el.setAttribute("aria-hidden", "true");
   el.style.width = el.style.height = size + "px";
   el.style.fontSize = Math.round(size * 0.38) + "px";
-  el.style.background = colourFor(seed || name);
+  el.style.backgroundColor = colourFor(seed || name);
   if (isPhotoDataUrl(photo)) {
     el.classList.add("avatar-photo");
     el.style.backgroundImage = 'url("' + photo + '")';
+    el.style.backgroundSize = "cover";
+    el.style.backgroundPosition = "center";
+    el.style.backgroundRepeat = "no-repeat";
   } else {
     el.textContent = initials(name);
   }
