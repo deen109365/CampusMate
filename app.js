@@ -1684,21 +1684,35 @@ function getPosition() {
   });
 }
 
+// The free Overpass servers are sometimes busy, so try the next one if a server fails or is slow.
+const OVERPASS_URLS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter"
+];
+
 async function fetchPlaces(pos) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 20000);
-  try {
-    const res = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "data=" + encodeURIComponent(buildOverpassQuery(pos.lat, pos.lon, 1500)),
-      signal: ctrl.signal
-    });
-    if (!res.ok) throw new Error("overpass " + res.status);
-    return parsePlaces(await res.json(), pos.lat, pos.lon);
-  } finally {
-    clearTimeout(timer);
+  const body = "data=" + encodeURIComponent(buildOverpassQuery(pos.lat, pos.lon, 1500));
+  let lastError = null;
+  for (const url of OVERPASS_URLS) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        signal: ctrl.signal
+      });
+      if (!res.ok) throw new Error("overpass " + res.status);
+      return parsePlaces(await res.json(), pos.lat, pos.lon);
+    } catch (e) {
+      lastError = e;
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  throw lastError || new Error("overpass");
 }
 
 function setMapStatus(text) { $("map-status").textContent = text; }
