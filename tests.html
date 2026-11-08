@@ -22,7 +22,10 @@
     import { overlap, formatsCompatible, pairId, isValidModule, normaliseModule, matchLabel, findCompatible } from "./matching.js";
     import { initials, colourFor, PALETTE, toB64Url, fromB64Url, isPhotoDataUrl, squareCrop, cropRect, PHOTO_PREFIX } from "./ui.js";
     import { haversineM, formatDistance, buildOverpassQuery, parsePlaces, filterByKind } from "./places.js";
-    import { validateGroupName, validateGroupMembers, buildGroup, requiredPairIds, memberLabel, canLeaveByDelete, MAX_GROUP_MEMBERS } from "./groups.js";
+    import {
+      validateGroupName, validateGroupMembers, buildGroup, requiredPairIds, memberLabel, canLeaveByDelete, MAX_GROUP_MEMBERS,
+      canAddMembers, addablePartners, validateAddMembers, buildAddUpdate, groupSnippet
+    } from "./groups.js";
     import {
       tsMillis, todayString, sessionStart, validateSession, isActive, isUpcoming, needsRating,
       pendingForMe, sortByStart, describeWhen, reminderFor, averageRating, isUnread, isSeen,
@@ -148,6 +151,7 @@
 
     test("base64url round trip", () => { const src = new Uint8Array([0, 250, 251, 252, 253, 255, 1]); eq(Array.from(new Uint8Array(fromB64Url(toB64Url(src.buffer)))), Array.from(src)); });
     test("base64url has no unsafe characters", () => eq(/[+/=]/.test(toB64Url(new Uint8Array([251, 255, 254]).buffer)), false));
+    
     // ---- profile photo ----
     test("isPhotoDataUrl accepts a small jpeg data URL", () => eq(isPhotoDataUrl(PHOTO_PREFIX + "AAAA"), true));
     test("isPhotoDataUrl rejects a png data URL", () => eq(isPhotoDataUrl("data:image/png;base64,AAAA"), false));
@@ -201,6 +205,25 @@
     test("requiredPairIds lists a sorted pair id per other member", () => eq(requiredPairIds("m", ["a", "m", "z"]), ["a_m", "m_z"]));
     test("memberLabel shows You for me", () => eq(memberLabel(G, "me"), "You, Ann, Bob"));
     test("canLeaveByDelete only for the last member", () => eq([canLeaveByDelete({ members: ["me"] }, "me"), canLeaveByDelete(G, "me")], [true, false]));
+    
+    // ---- adding people to a group, group unread line ----
+    const G3 = { ownerUid: "me", members: ["me", "a", "b"], memberNames: { me: "Deen", a: "Ann", b: "Bob" } };
+    test("only the creator can add people", () => eq([canAddMembers(G3, "me"), canAddMembers(G3, "a")], [true, false]));
+    test("nobody can add to a full group of 5", () => eq(canAddMembers({ ownerUid: "me", members: ["me", "a", "b", "c", "d"] }, "me"), false));
+    test("a creator who has left cannot add people", () => eq(canAddMembers({ ownerUid: "me", members: ["a", "b"] }, "me"), false));
+    test("addablePartners leaves out people already in the group", () => eq(addablePartners([{ uid: "a", name: "Ann" }, { uid: "c", name: "Cy" }], G3).map((p) => p.uid), ["c"]));
+    test("addablePartners removes duplicates and empty entries", () => eq(addablePartners([{ uid: "c" }, { uid: "c" }, null, {}], G3).length, 1));
+    test("adding nobody is rejected", () => eq(validateAddMembers(G3, []) !== "", true));
+    test("adding up to the room left is accepted", () => eq(validateAddMembers(G3, ["c", "d"]), ""));
+    test("adding more than the room left is rejected", () => eq(validateAddMembers(G3, ["c", "d", "e"]) !== "", true));
+    test("a full group says it is full", () => eq(validateAddMembers({ members: ["1", "2", "3", "4", "5"] }, ["x"]), "This group is full."));
+    const AU = buildAddUpdate(G3, [{ uid: "c", name: "Cy" }, { uid: "a", name: "Ann again" }, { uid: "c", name: "Cy again" }]);
+    test("buildAddUpdate keeps the old members first and skips duplicates", () => eq(AU.members, ["me", "a", "b", "c"]));
+    test("buildAddUpdate stores the new name and keeps the old names", () => eq([AU.memberNames.c, AU.memberNames.a, G3.members.length], ["Cy", "Ann", 3]));
+    test("group line shows the member names before any message", () => eq(groupSnippet(G3, null, "me"), "You, Ann, Bob"));
+    test("group line shows my message with You", () => eq(groupSnippet(G3, { senderUid: "me", text: "hi" }, "me"), "You: hi"));
+    test("group line shows another member's name", () => eq(groupSnippet(G3, { senderUid: "a", senderName: "Ann", text: "hello" }, "me"), "Ann: hello"));
+    test("a group message from someone else is unread until read", () => eq([isUnread({ senderUid: "a", createdAt: { toDate: () => new Date(2000) } }, null, "me"), isUnread({ senderUid: "a", createdAt: { toDate: () => new Date(2000) } }, { at: { toDate: () => new Date(3000) } }, "me")], [true, false]));
     const passed = results.filter((r) => r.ok).length;
     const summary = document.getElementById("summary");
     summary.textContent = passed + " / " + results.length + " tests passed";
