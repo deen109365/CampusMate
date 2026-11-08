@@ -144,7 +144,15 @@
               <strong id="group-name">Group</strong>
               <span id="group-sub" class="muted"></span>
             </div>
-            <button id="group-leave" class="btn btn-ghost btn-small" type="button">Leave</button>
+            <div class="chat-menu-wrap">
+              <button id="group-menu-btn" class="icon-btn" type="button" aria-label="Group options" aria-haspopup="true" aria-expanded="false">
+                <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="5" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/></svg>
+              </button>
+              <div id="group-menu" class="menu" role="menu" hidden>
+                <button type="button" role="menuitem" id="group-add">Add member</button>
+                <button type="button" role="menuitem" id="group-leave">Leave group</button>
+              </div>
+            </div>
           </div>
           <div id="group-log" class="chat-log" role="log" aria-live="polite" aria-label="Group conversation"></div>
           <form id="group-form" class="chat-form" autocomplete="off">
@@ -363,6 +371,20 @@
     <div class="dlg-actions">
       <button id="g-cancel" class="btn btn-ghost" type="button">Cancel</button>
       <button id="g-ok" class="btn btn-primary" type="button">Create group</button>
+    </div>
+  </dialog>
+
+  <dialog id="add-dlg" aria-labelledby="add-dlg-title">
+    <h2 id="add-dlg-title">Add to the group</h2>
+    <p id="add-info" class="muted"></p>
+    <fieldset class="field">
+      <legend>Study partners</legend>
+      <div id="add-members" class="check-list"></div>
+    </fieldset>
+    <p id="add-error" class="form-message" role="alert"></p>
+    <div class="dlg-actions">
+      <button id="add-cancel" class="btn btn-ghost" type="button">Cancel</button>
+      <button id="add-ok" class="btn btn-primary" type="button">Add</button>
     </div>
   </dialog>
 
