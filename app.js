@@ -16,7 +16,10 @@ import {
   buildIcs, googleCalendarUrl, minutesUntil
 } from "./sessions.js";
 import { createAvatar, createChip, formatTime, toast, initThemeToggle, toB64Url, fromB64Url, loadImageFile, cropRect, cropToDataUrl, isPhotoDataUrl } from "./ui.js";
-import { validateGroupName, validateGroupMembers, buildGroup, memberLabel, canLeaveByDelete } from "./groups.js";
+import {
+  validateGroupName, validateGroupMembers, buildGroup, memberLabel, canLeaveByDelete,
+  canAddMembers, addablePartners, validateAddMembers, buildAddUpdate, groupSnippet
+} from "./groups.js";
 import { buildOverpassQuery, parsePlaces, filterByKind, formatDistance, KINDS } from "./places.js";
 
 const firebaseConfig = {
@@ -67,6 +70,8 @@ const photoCache = new Map();          // uid -> photo data URL ("" = none), for
 let groups = [];                       // groups I belong to
 let activeGroup = null;                // group id open in the group chat
 let unsubGroupMsgs = null;
+const groupSubs = new Map();           // gid -> { unsubs, latest, read } for unread badges
+const announcedGroupMessage = new Map(); // gid -> last announced message time
 const prevRequestStatus = new Map();   // pid -> status, to detect changes
 const announcedMessage = new Map();    // pid -> last announced message time
 const reminded = new Set();            // session ids already reminded
@@ -1237,7 +1242,7 @@ function updateBadges() {
   const hb = $("nav-badge");
   hb.textContent = String(homeCount);
   hb.hidden = homeCount === 0;
-  const unread = unreadPairs().length;
+  const unread = unreadPairs().length + unreadGroups().length;
   const mb = $("msg-badge");
   mb.textContent = String(unread);
   mb.hidden = unread === 0;
@@ -1488,9 +1493,84 @@ function subscribeGroups() {
       groups = [];
       snap.forEach((d) => groups.push({ id: d.id, ...d.data() }));
       groups.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      syncGroupSubs();
       renderGroups();
       if (activeGroup && !groups.some((g) => g.id === activeGroup)) closeGroup();
+      else refreshGroupHeader();
     }, errToast));
+}
+
+// one small listener pair per group: its latest message and when I last read it
+function syncGroupSubs() {
+  const want = new Set(groups.map((g) => g.id));
+  for (const [gid, sub] of groupSubs) {
+    if (!want.has(gid)) { sub.unsubs.forEach((u) => u()); groupSubs.delete(gid); }
+  }
+  for (const g of groups) {
+    if (groupSubs.has(g.id)) continue;
+    const sub = { unsubs: [], latest: null, read: null };
+    groupSubs.set(g.id, sub);
+    sub.unsubs.push(onSnapshot(query(collection(db, "groups", g.id, "messages"), orderBy("createdAt", "desc"), limit(1)), (snap) => {
+      sub.latest = null;
+      snap.forEach((d) => { sub.latest = d.data(); });
+      renderGroupUnread();
+    }, () => { /* access is lost when I leave a group */ }));
+    sub.unsubs.push(onSnapshot(doc(db, "groups", g.id, "reads", me.uid), (snap) => {
+      sub.read = snap.exists() ? snap.data() : null;
+      renderGroupUnread();
+    }, () => { /* access is lost when I leave a group */ }));
+  }
+}
+
+function unreadGroups() {
+  const ids = [];
+  for (const [gid, sub] of groupSubs) {
+    if (gid !== activeGroup && isUnread(sub.latest, sub.read, me.uid)) ids.push(gid);
+  }
+  return ids;
+}
+
+let markingGroupRead = false;
+async function markGroupRead(gid) {
+  if (markingGroupRead) return;
+  markingGroupRead = true;
+  try {
+    await setDoc(doc(db, "groups", gid, "reads", me.uid), { at: serverTimestamp() });
+  } catch (e) { /* not critical */ }
+  markingGroupRead = false;
+}
+
+function announceNewGroupMessages() {
+  for (const [gid, sub] of groupSubs) {
+    const latest = sub.latest;
+    if (!latest || latest.senderUid === me.uid) continue;
+    const t = tsMillis(latest.createdAt);
+    if (!t || t <= startedAt || t <= (announcedGroupMessage.get(gid) || 0)) continue;
+    announcedGroupMessage.set(gid, t);
+    if (gid === activeGroup && !document.hidden) continue; // already looking at it
+    const g = groups.find((x) => x.id === gid);
+    announce(g ? g.name : "Study group", (latest.senderName || "Member") + ": " + String(latest.text || "").slice(0, 80), "gmsg-" + gid);
+  }
+}
+
+function renderGroupUnread() {
+  if (!me) return;
+  announceNewGroupMessages();
+  if (activeGroup && groupSubs.has(activeGroup)) {
+    const sub = groupSubs.get(activeGroup);
+    if (isUnread(sub.latest, sub.read, me.uid)) markGroupRead(activeGroup);
+  }
+  updateBadges();
+  renderGroups();
+}
+
+// header of the open group: member count, and the Add member item only for the creator
+function refreshGroupHeader() {
+  const g = groups.find((x) => x.id === activeGroup);
+  if (!g) return;
+  $("group-name").textContent = g.name;
+  $("group-sub").textContent = (g.members || []).length + " people";
+  $("group-add").hidden = !canAddMembers(g, me.uid);
 }
 
 function renderGroups() {
@@ -1505,10 +1585,14 @@ function renderGroups() {
     btn.type = "button";
     btn.className = "card person group-card";
     btn.style.cssText = "width:100%;text-align:left;cursor:pointer;align-items:center";
-    btn.setAttribute("aria-label", "Open group " + g.name);
+    const sub = groupSubs.get(g.id);
+    const unread = !!sub && isUnread(sub.latest, sub.read, me.uid);
+    btn.setAttribute("aria-label", "Open group " + g.name + (unread ? " (unread message)" : ""));
     btn.appendChild(createAvatar(g.name, g.id, 48));
     const body = el("div", "person-body");
-    body.append(el("div", "person-name", g.name), el("div", "muted snippet", memberLabel(g, me.uid)));
+    const nameRow = el("div", "person-name" + (unread ? " unread" : ""), g.name);
+    if (unread) { const dot = el("span", "unread-dot"); dot.setAttribute("aria-hidden", "true"); nameRow.appendChild(dot); }
+    body.append(nameRow, el("div", "muted snippet" + (unread ? " unread" : ""), groupSnippet(g, sub && sub.latest, me.uid)));
     btn.appendChild(body);
     btn.addEventListener("click", () => openGroup(g));
     host.appendChild(btn);
@@ -1519,8 +1603,8 @@ function openGroup(g) {
   closeChat(true);
   closeGroup(true);
   activeGroup = g.id;
-  $("group-name").textContent = g.name;
-  $("group-sub").textContent = (g.members || []).length + " people";
+  refreshGroupHeader();
+  toggleGroupMenu(false);
   $("group-avatar").replaceChildren(createAvatar(g.name, g.id, 40));
   $("partners-panel").hidden = true;
   $("chat-panel").hidden = true;
@@ -1535,6 +1619,8 @@ function openGroup(g) {
     },
     errToast
   );
+  markGroupRead(g.id);
+  updateBadges();
   if (window.matchMedia("(pointer: fine)").matches) $("group-input").focus();
 }
 
@@ -1545,6 +1631,7 @@ function closeGroup(keepPanelState) {
     $("group-panel").hidden = true;
     if (me && $("chat-panel").hidden) $("partners-panel").hidden = false;
   }
+  if (me) { updateBadges(); renderGroups(); }
 }
 $("group-back").addEventListener("click", () => closeGroup());
 
@@ -1582,7 +1669,73 @@ $("group-form").addEventListener("submit", async (e) => {
   }
 });
 
+// ---- Group menu: add member / leave ----
+function toggleGroupMenu(open) {
+  const menu = $("group-menu");
+  const show = open === undefined ? menu.hidden : open;
+  menu.hidden = !show;
+  $("group-menu-btn").setAttribute("aria-expanded", String(show));
+}
+$("group-menu-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleGroupMenu(); });
+document.addEventListener("click", (e) => {
+  if (!$("group-menu").hidden && !e.target.closest(".chat-menu-wrap")) toggleGroupMenu(false);
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggleGroupMenu(false); });
+
+async function postGroupMessage(gid, text) {
+  try {
+    await addDoc(collection(db, "groups", gid, "messages"), {
+      senderUid: me.uid, senderName: currentName(), text, createdAt: serverTimestamp()
+    });
+  } catch (e) { /* the change itself is already saved */ }
+}
+
+function openAddMemberDialog() {
+  const g = groups.find((x) => x.id === activeGroup);
+  if (!g) return;
+  if (!canAddMembers(g, me.uid)) { toast("Only the person who created the group can add people, and a group has up to 5.", "info"); return; }
+  const candidates = addablePartners(partnerPairs().map(partnerOf), g);
+  if (!candidates.length) { toast("All your study partners are already in this group.", "info"); return; }
+  const dlg = $("add-dlg");
+  if (typeof dlg.showModal !== "function") { toast("Your browser does not support this dialog.", "error"); return; }
+  const room = 5 - (g.members || []).length;
+  $("add-info").textContent = "You can add " + room + " more " + (room === 1 ? "person" : "people") + ". Only your study partners are listed.";
+  $("add-error").textContent = "";
+  const list = $("add-members");
+  list.replaceChildren();
+  for (const p of candidates) {
+    const row = el("label", "check-row");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = p.uid;
+    row.append(box, createAvatar(p.name, p.uid, 32, photoFor(p.uid)), el("span", "", p.name));
+    list.appendChild(row);
+  }
+  $("add-cancel").onclick = () => dlg.close();
+  $("add-ok").onclick = async () => {
+    const chosen = [...list.querySelectorAll("input:checked")].map((i) => i.value);
+    const problem = validateAddMembers(g, chosen);
+    if (problem) { $("add-error").textContent = problem; return; }
+    const others = candidates.filter((p) => chosen.includes(p.uid));
+    const btn = $("add-ok");
+    btn.disabled = true;
+    try {
+      await updateDoc(doc(db, "groups", g.id), buildAddUpdate(g, others));
+      dlg.close();
+      toast(others.length === 1 ? others[0].name + " was added" : others.length + " people were added", "success");
+      postGroupMessage(g.id, "Added " + others.map((p) => p.name).join(", ") + " to the group.");
+    } catch (err) {
+      $("add-error").textContent = friendlyError(err);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  dlg.showModal();
+}
+$("group-add").addEventListener("click", () => { toggleGroupMenu(false); openAddMemberDialog(); });
+
 $("group-leave").addEventListener("click", async () => {
+  toggleGroupMenu(false);
   const g = groups.find((x) => x.id === activeGroup);
   if (!g) return;
   const res = await openDialog({
@@ -1643,7 +1796,7 @@ function openGroupDialog() {
 }
 $("group-new").addEventListener("click", openGroupDialog);
 
-// ---- Study places map (Leaflet + OpenStreetMap) ----
+// ---- Study places map (Leaflet + OpenStreetMap + Overpass) ----
 const LEAFLET_VERSION = "1.9.4";
 const LEAFLET_BASE = "https://cdn.jsdelivr.net/npm/leaflet@" + LEAFLET_VERSION + "/dist/";
 const LEAFLET_CSS_SRI = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
@@ -1746,12 +1899,19 @@ async function fetchOverpass(pos) {
   throw lastError || new Error("overpass");
 }
 
+// Show place names in plain letters (Cafe instead of Café) so they are easy to read and type.
+function plainText(text) {
+  return String(text).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 async function fetchPlaces(pos) {
+  let list;
   try {
-    return await fetchNominatim(pos);
+    list = await fetchNominatim(pos);
   } catch (e) {
-    return fetchOverpass(pos);
+    list = await fetchOverpass(pos);
   }
+  return list.map((p) => ({ ...p, name: plainText(p.name) }));
 }
 
 function setMapStatus(text) { $("map-status").textContent = text; }
@@ -1899,6 +2059,9 @@ function cleanupSession() {
   pairSubs.clear();
   closeChat();
   closeGroup();
+  for (const sub of groupSubs.values()) sub.unsubs.forEach((u) => u());
+  groupSubs.clear();
+  announcedGroupMessage.clear();
   groups = [];
   photoCache.clear();
   photoLoading.clear();
