@@ -1643,7 +1643,7 @@ function openGroupDialog() {
 }
 $("group-new").addEventListener("click", openGroupDialog);
 
-// ---- Study places map (Leaflet + OpenStreetMap + Overpass) ----
+// ---- Study places map (Leaflet + OpenStreetMap) ----
 const LEAFLET_VERSION = "1.9.4";
 const LEAFLET_BASE = "https://cdn.jsdelivr.net/npm/leaflet@" + LEAFLET_VERSION + "/dist/";
 const LEAFLET_CSS_SRI = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
@@ -1684,35 +1684,74 @@ function getPosition() {
   });
 }
 
-// The free Overpass servers are sometimes busy, so try the next one if a server fails or is slow.
+// Places come from OpenStreetMap. Nominatim (OpenStreetMap's own search) is tried first, then the Overpass servers.
 const OVERPASS_URLS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.private.coffee/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter"
 ];
+const NOMINATIM_SEARCHES = [
+  { q: "library", category: "amenity", type: "library" },
+  { q: "cafe", category: "amenity", type: "cafe" },
+  { q: "park", category: "leisure", type: "park" }
+];
 
-async function fetchPlaces(pos) {
+async function fetchJson(url, options, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const res = await fetch(url, { ...options, signal: ctrl.signal });
+    if (!res.ok) throw new Error("http " + res.status);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Nominatim asks for at most one request per second, so the three searches run one after another.
+async function fetchNominatim(pos) {
+  const dLat = 1500 / 111320;
+  const dLon = dLat / Math.cos(pos.lat * Math.PI / 180);
+  const box = [pos.lon - dLon, pos.lat + dLat, pos.lon + dLon, pos.lat - dLat].map((n) => n.toFixed(5)).join(",");
+  const elements = [];
+  for (let i = 0; i < NOMINATIM_SEARCHES.length; i++) {
+    const s = NOMINATIM_SEARCHES[i];
+    if (i > 0) await new Promise((r) => setTimeout(r, 1100));
+    const url = "https://nominatim.openstreetmap.org/search?q=" + s.q + "&format=jsonv2&limit=20&bounded=1&viewbox=" + box;
+    const rows = await fetchJson(url, {}, 8000);
+    if (!Array.isArray(rows)) throw new Error("nominatim");
+    for (const r of rows) {
+      if (r.category !== s.category || r.type !== s.type) continue;
+      elements.push({ type: r.osm_type || "x", id: r.osm_id, lat: Number(r.lat), lon: Number(r.lon), tags: { [s.category]: s.type, name: r.name } });
+    }
+  }
+  return parsePlaces({ elements }, pos.lat, pos.lon);
+}
+
+async function fetchOverpass(pos) {
   const body = "data=" + encodeURIComponent(buildOverpassQuery(pos.lat, pos.lon, 1500));
   let lastError = null;
   for (const url of OVERPASS_URLS) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12000);
     try {
-      const res = await fetch(url, {
+      const json = await fetchJson(url, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-        signal: ctrl.signal
-      });
-      if (!res.ok) throw new Error("overpass " + res.status);
-      return parsePlaces(await res.json(), pos.lat, pos.lon);
+        body
+      }, 10000);
+      return parsePlaces(json, pos.lat, pos.lon);
     } catch (e) {
       lastError = e;
-    } finally {
-      clearTimeout(timer);
     }
   }
   throw lastError || new Error("overpass");
+}
+
+async function fetchPlaces(pos) {
+  try {
+    return await fetchNominatim(pos);
+  } catch (e) {
+    return fetchOverpass(pos);
+  }
 }
 
 function setMapStatus(text) { $("map-status").textContent = text; }
