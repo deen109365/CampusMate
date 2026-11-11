@@ -1,0 +1,153 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    // ---- study partnerships (requests/{pairId}) ----
+    function pairDoc(pid) { return get(/databases/$(database)/documents/requests/$(pid)); }
+    function isMember(pid) { return signedIn() && request.auth.uid in pairDoc(pid).data.users; }
+    function isAccepted(pid) { return isMember(pid) && pairDoc(pid).data.status == 'accepted'; }
+    function otherOf(pid) {
+      return pairDoc(pid).data.users[0] == request.auth.uid ? pairDoc(pid).data.users[1] : pairDoc(pid).data.users[0];
+    }
+    function notBlocked(pid) {
+      return !exists(/databases/$(database)/documents/blocks/$(request.auth.uid + '_' + otherOf(pid)))
+          && !exists(/databases/$(database)/documents/blocks/$(otherOf(pid) + '_' + request.auth.uid));
+    }
+
+    // ---- profiles (a photo, if present, must be a small JPEG data URL) ----
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == userId
+        && (!('photo' in request.resource.data)
+            || (request.resource.data.photo is string
+                && request.resource.data.photo.size() < 40001
+                && (request.resource.data.photo == ''
+                    || request.resource.data.photo.matches('^data:image/jpeg;base64,[A-Za-z0-9+/=]+$'))));
+    }
+
+    match /requests/{pid} {
+      allow read: if signedIn() && request.auth.uid in resource.data.users;
+      allow create: if signedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.users.size() == 2
+        && request.auth.uid in request.resource.data.users
+        && request.resource.data.toUid in request.resource.data.users
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.status == 'pending';
+      allow update: if signedIn() && request.auth.uid == resource.data.toUid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+        && request.resource.data.status in ['accepted', 'declined'];
+
+      match /messages/{mid} {
+        allow read: if isMember(pid);
+        allow create: if isAccepted(pid) && notBlocked(pid)
+          && request.resource.data.senderUid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 500;
+      }
+
+      match /sessions/{sid} {
+        allow read: if isMember(pid);
+        allow create: if isAccepted(pid) && notBlocked(pid)
+          && request.resource.data.proposedBy == request.auth.uid;
+        allow update: if isAccepted(pid) && notBlocked(pid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && request.resource.data.status in ['accepted', 'declined', 'cancelled'];
+      }
+
+      match /reads/{uid} {
+        allow read: if isMember(pid);
+        allow write: if isMember(pid) && request.auth.uid == uid;
+      }
+    }
+
+    match /blocks/{bid} {
+      allow read: if signedIn() && (resource.data.blocker == request.auth.uid || resource.data.blocked == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.blocker == request.auth.uid
+        && bid == request.auth.uid + '_' + request.resource.data.blocked;
+    }
+
+    match /reports/{rid} {
+      allow create: if signedIn() && request.resource.data.reporter == request.auth.uid;
+    }
+
+    match /ratings/{rid} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.rater == request.auth.uid
+        && request.resource.data.ratee != request.auth.uid
+        && request.resource.data.stars is int
+        && request.resource.data.stars >= 1 && request.resource.data.stars <= 5
+        && rid == request.resource.data.sessionId + '_' + request.auth.uid
+        && isMember(request.resource.data.pairId);
+    }
+
+    // ---- study groups (new) ----
+    // A member of groups/{gid} is someone whose uid is in the "members" array.
+    function groupDoc(gid) { return get(/databases/$(database)/documents/groups/$(gid)); }
+    function inGroup(gid) { return signedIn() && request.auth.uid in groupDoc(gid).data.members; }
+
+    // the creator must already be an accepted study partner of this person
+    function acceptedWith(owner, other) {
+      return get(/databases/$(database)/documents/requests/$(other < owner ? other + '_' + owner : owner + '_' + other)).data.status == 'accepted';
+    }
+
+    match /groups/{gid} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['name', 'module', 'ownerUid', 'members', 'memberNames', 'createdAt'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.members is list
+        && request.resource.data.members.size() >= 2 && request.resource.data.members.size() <= 5
+        && request.resource.data.members[0] == request.auth.uid
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 40
+        && acceptedWith(request.auth.uid, request.resource.data.members[1])
+        && (request.resource.data.members.size() < 3 || acceptedWith(request.auth.uid, request.resource.data.members[2]))
+        && (request.resource.data.members.size() < 4 || acceptedWith(request.auth.uid, request.resource.data.members[3]))
+        && (request.resource.data.members.size() < 5 || acceptedWith(request.auth.uid, request.resource.data.members[4]));
+
+      // two kinds of change are allowed:
+      // first: leaving. The new list is the old list without me
+      // second: adding people. Only the creator, old members stay in the same order, at most 5 people in total,
+      //    no duplicates, and each person added must be an accepted study partner of the creator
+      allow update: if signedIn() && request.auth.uid in resource.data.members
+        && (
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+            && !(request.auth.uid in request.resource.data.members)
+            && request.resource.data.members.size() == resource.data.members.size() - 1
+            && resource.data.members.hasAll(request.resource.data.members))
+          ||
+          (request.auth.uid == resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberNames'])
+            && request.resource.data.members.size() > resource.data.members.size()
+            && request.resource.data.members.size() <= 5
+            && request.resource.data.members[0:resource.data.members.size()] == resource.data.members
+            && request.resource.data.members.toSet().size() == request.resource.data.members.size()
+            && (request.resource.data.members.size() <= 1 || resource.data.members.hasAny([request.resource.data.members[1]]) || acceptedWith(request.auth.uid, request.resource.data.members[1]))
+            && (request.resource.data.members.size() <= 2 || resource.data.members.hasAny([request.resource.data.members[2]]) || acceptedWith(request.auth.uid, request.resource.data.members[2]))
+            && (request.resource.data.members.size() <= 3 || resource.data.members.hasAny([request.resource.data.members[3]]) || acceptedWith(request.auth.uid, request.resource.data.members[3]))
+            && (request.resource.data.members.size() <= 4 || resource.data.members.hasAny([request.resource.data.members[4]]) || acceptedWith(request.auth.uid, request.resource.data.members[4])))
+        );
+
+      // the last person to leave removes the group
+      allow delete: if signedIn() && resource.data.members.size() == 1 && request.auth.uid in resource.data.members;
+
+      match /messages/{mid} {
+        allow read: if inGroup(gid);
+        allow create: if inGroup(gid)
+          && request.resource.data.senderUid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 500;
+      }
+
+      // when each member last read the group chat (used for the unread badge)
+      match /reads/{uid} {
+        allow read: if inGroup(gid);
+        allow write: if inGroup(gid) && request.auth.uid == uid;
+      }
+    }
+  }
+}
