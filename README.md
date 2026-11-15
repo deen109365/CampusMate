@@ -8,6 +8,8 @@ Live App: https://deen109365.github.io/CampusMate/
 
 GitHub Repository: https://github.com/deen109365/CampusMate
 
+Unit Tests: https://deen109365.github.io/CampusMate/tests.html
+
 ## Features
 
 1. Sign up and log in with email verification (Firebase Authentication)
