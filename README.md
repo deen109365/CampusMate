@@ -35,8 +35,8 @@ GitHub Repository: https://github.com/deen109365/CampusMate
 
 The app is plain HTML, CSS and JavaScript with no build step.
 1. Download or clone the repository.
-2. Serve the folder with any local web server, for example python3 -m http.server 8000, and open http://localhost:8000
-3. The app uses my Firebase project. To use your own, create a Firebase project with Authentication (email/password) and Firestore, put its config in the Firebase setup in app.js, and publish firestore.rules.
+2. Start a local web server in the folder, for example `python3 -m http.server 8000`, and open `http://localhost:8000` in a browser.
+3. The app uses my Firebase project, so it works as it is.
 
 ## Testing
 
